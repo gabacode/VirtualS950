@@ -61,6 +61,10 @@ Run-Check "StuckNoteCheck" (@(Join-Path $root "AkaiS950Tests\StuckNoteCheck.cs")
 if ($Images -ne "") {
     Run-Check "PatchCheck" `
         (@(Join-Path $root "AkaiS950Tests\PatchCheck.cs") + $engine + $studio + $list) $Images
+
+    # Needs a real programme to edit, so it belongs here rather than above.
+    Run-Check "EditHeardCheck" `
+        (@(Join-Path $root "AkaiS950Tests\EditHeardCheck.cs") + $engine + $studio + $list) $Images
 } else {
     Write-Host ""
     Write-Host "(PatchCheck skipped - pass -Images <folder of .hfe> to play the library)"

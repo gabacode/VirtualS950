@@ -197,8 +197,40 @@ namespace AkaiS950Studio
         AkaiEntry _programEntry;
         Patch _programPatch;
 
+        // The revision everything cached here was derived from.
+        AkaiDisk _cacheDisk;
+        int _cacheRevision = -1;
+
+        /// <summary>
+        /// Throw away anything derived from a disk that has since been edited.
+        ///
+        /// Called wherever a disk comes in. Without it an edit to a filter, an envelope
+        /// or a sample is inaudible: the patch and the decoded audio were both built
+        /// before the edit and neither has any reason to notice. Comparing the disk's
+        /// revision is what makes that impossible to forget at an edit site.
+        ///
+        /// Editing one disk drops what was cached for another. They are cheap to
+        /// rebuild, and the alternative is bookkeeping per disk for a case - editing
+        /// two images while playing a third - that does not arise.
+        /// </summary>
+        void DropStaleCaches(AkaiDisk disk)
+        {
+            if (disk == null) return;
+            if (ReferenceEquals(disk, _cacheDisk) && disk.Revision == _cacheRevision) return;
+
+            _cacheDisk = disk;
+            _cacheRevision = disk.Revision;
+
+            _sounds.Clear();
+            _programDisk = null;
+            _programEntry = null;
+            _programPatch = null;
+        }
+
         public void SetProgram(AkaiDisk disk, AkaiEntry program)
         {
+            DropStaleCaches(disk);
+
             if (disk == null || program == null || program.Type != 'P')
             {
                 _programDisk = null; _programEntry = null; _programPatch = null;
@@ -349,11 +381,16 @@ namespace AkaiS950Studio
         }
 
         /// <summary>Forget the decoded audio - after an edit, or a reload.</summary>
+        /// <summary>
+        /// Forget everything decoded or built. Normally unnecessary - a disk's revision
+        /// does this by itself - and kept for a caller that has changed something the
+        /// revision cannot see.
+        /// </summary>
         public void Invalidate()
         {
             _sounds.Clear();
-            // and the patch built out of them, or an edited sample would go on sounding
-            // as it did before the edit
+            _cacheDisk = null;
+            _cacheRevision = -1;
             _programDisk = null; _programEntry = null; _programPatch = null;
         }
 
@@ -380,6 +417,8 @@ namespace AkaiS950Studio
         /// </summary>
         public void PlaySample(AkaiDisk disk, AkaiEntry sample, int note)
         {
+            DropStaleCaches(disk);
+
             Sound sound = SoundFor(disk, sample);
             if (sound == null) return;
 

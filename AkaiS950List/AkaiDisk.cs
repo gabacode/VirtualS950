@@ -94,7 +94,30 @@ namespace AkaiS950List
         /// <summary>The original file bytes, kept so edits can be written back in place.</summary>
         public byte[] RawHfe;
         public bool IsHfe;
-        public bool Modified;
+        bool _modified;
+
+        /// <summary>Whether the image differs from the file it was read from.</summary>
+        public bool Modified
+        {
+            get { return _modified; }
+            set { _modified = value; Revision++; }
+        }
+
+        /// <summary>
+        /// Bumped whenever anything touches the image.
+        ///
+        /// Anything holding something derived from these bytes - decoded audio, a
+        /// built patch - can compare this against the revision it derived from and
+        /// find out that it is stale, without every edit having to remember to say so.
+        /// Every write goes through code that sets Modified, so this comes for free;
+        /// an edit site that forgot to announce itself is the failure this avoids.
+        ///
+        /// It counts writes, not versions: only equality means anything. Clearing
+        /// Modified after a save bumps it too, which costs one rebuild and keeps the
+        /// rule simple - undo restores the flag as well as the bytes, and that has to
+        /// count as a change.
+        /// </summary>
+        public int Revision { get; private set; }
         public int BadCrcSectors;
         public int MissingSectors;
         public List<AkaiEntry> Entries = new List<AkaiEntry>();
