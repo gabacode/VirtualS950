@@ -40,7 +40,28 @@ with the worst relative difference across the filter's 65 cutoff points at exact
 JUCE is GPL3 unless you buy a licence. `VirtualS950` is a public repository, so a GPL3 plugin
 is fine; a closed-source one would not be.
 
-## Building and checking it
+## Building the plugin
+
+```
+cd Plugin
+cmake -S . -B build
+cmake --build build --config Release --parallel
+```
+
+CMake ships inside Visual Studio, so there is nothing else to install — `build.ps1` finds it
+the same way it finds the compiler. That produces three things:
+
+- a **VST3**, installed to `%LOCALAPPDATA%\Programs\Common\VST3`. JUCE would rather put it in
+  `C:\Program Files\Common Files\VST3`, but that cannot be written to — or created — without
+  elevation, and building as administrator to test an audio plugin is the wrong trade. The
+  per-user folder is the other location the VST3 specification names. In Ableton, add it once
+  under Preferences → Plug-Ins → VST3 Plug-In Custom Folder.
+- a **standalone** at `build/VirtualS950_artefacts/Release/Standalone/VirtualS950.exe`, which
+  opens without a DAW. That is what makes "is the plugin broken, or is the host unhappy with
+  it" answerable in one step rather than two.
+- the **conformance check**, at `build/Release/ConformanceCheck.exe`.
+
+## Checking the engine on its own
 
 ```
 cd Plugin
@@ -81,13 +102,16 @@ Two places where it could not stay identical, both in `Engine`:
 
 ## Still to do
 
-1. The JUCE wrapper — `AudioProcessor`, `processBlock` calling `Engine::render`, MIDI in
-   from the host.
+1. **Reading disks.** The plugin plays a placeholder sawtooth until it can open an image.
+   `AkaiS950List` is 2700 lines of byte manipulation with no dependencies; the plugin only
+   needs the reading half of it.
 2. **State.** A host saves the project and expects it back exactly. A file path breaks the
    moment the library moves — but an S950 image is 800×1024 bytes, so the whole disk can go
-   in the plugin's state and there is never a missing file to hunt.
-3. Reading disks. `AkaiS950List` is 2700 lines of byte manipulation with no dependencies;
-   the plugin only needs the reading half of it.
+   in the plugin's state and there is never a missing file to hunt. Only the parameters are
+   saved today.
+3. An editor worth looking at. What is there now is a gain knob and a voice count, the
+   second of which answers the first question anyone asks of a silent plugin — is it getting
+   the notes? — without a debugger.
 
 ## Sample-accurate events
 

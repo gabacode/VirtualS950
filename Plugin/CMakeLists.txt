@@ -1,0 +1,97 @@
+cmake_minimum_required(VERSION 3.22)
+
+project(VirtualS950 VERSION 0.1.0 LANGUAGES C CXX)
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+#
+# JUCE lives beside the repository rather than inside it: a few hundred megabytes that
+# every JUCE project on the machine can share, and nothing for this repository to carry.
+# Override with -DJUCE_PATH=... if it is somewhere else.
+#
+set(JUCE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../JUCE" CACHE PATH "Where JUCE is checked out")
+
+if(NOT EXISTS "${JUCE_PATH}/CMakeLists.txt")
+    message(FATAL_ERROR
+        "No JUCE at ${JUCE_PATH}.\n"
+        "  cd ${CMAKE_CURRENT_SOURCE_DIR}/../..\n"
+        "  git clone --depth 1 https://github.com/juce-framework/JUCE\n"
+        "or pass -DJUCE_PATH=<wherever it is>.")
+endif()
+
+add_subdirectory("${JUCE_PATH}" JUCE)
+
+#
+# Where a built plugin gets installed.
+#
+# JUCE's default is C:\Program Files\Common Files\VST3, which cannot be written to - or
+# even created - without elevation, so every build would fail at the last step unless the
+# whole thing ran as administrator. Building as administrator to test an audio plugin is
+# the wrong trade.
+#
+# This is the other location the VST3 specification names, the per-user one, which needs no
+# elevation. Hosts differ on whether they scan it by default: in Ableton it goes in
+# Preferences - Plug-Ins - VST3 Plug-In Custom Folder, once.
+#
+set(VST3_DESTINATION "$ENV{LOCALAPPDATA}/Programs/Common/VST3"
+    CACHE PATH "Where to install the built VST3")
+
+juce_add_plugin(VirtualS950
+    COMPANY_NAME                "simozzer"
+    PRODUCT_NAME                "VirtualS950"
+    PLUGIN_MANUFACTURER_CODE    Smoz
+    PLUGIN_CODE                 Ak95
+
+    VST3_COPY_DIR               "${VST3_DESTINATION}"
+
+    IS_SYNTH                    TRUE
+    NEEDS_MIDI_INPUT            TRUE
+    NEEDS_MIDI_OUTPUT           FALSE
+    IS_MIDI_EFFECT              FALSE
+    EDITOR_WANTS_KEYBOARD_FOCUS FALSE
+
+    # Straight into the folder the host scans, so a build is testable without copying.
+    COPY_PLUGIN_AFTER_BUILD     TRUE
+
+    # Standalone as well as VST3: it opens without a DAW, which makes "is the plugin
+    # broken or is the host unhappy with it" answerable in one step rather than two.
+    FORMATS                     VST3 Standalone)
+
+target_sources(VirtualS950 PRIVATE
+    Source/PluginProcessor.cpp
+    Source/PluginEditor.cpp
+    Source/S950/Voice.cpp
+    Source/S950/Engine.cpp)
+
+target_include_directories(VirtualS950 PRIVATE Source)
+
+target_compile_definitions(VirtualS950 PUBLIC
+    JUCE_WEB_BROWSER=0
+    JUCE_USE_CURL=0
+    JUCE_VST3_CAN_REPLACE_VST2=0
+    JUCE_DISPLAY_SPLASH_SCREEN=0)
+
+target_link_libraries(VirtualS950
+    PRIVATE
+        juce::juce_audio_utils
+    PUBLIC
+        juce::juce_recommended_config_flags
+        juce::juce_recommended_lto_flags
+        juce::juce_recommended_warning_flags)
+
+#
+# The conformance check, built by the same configure so it cannot be forgotten.
+#
+# It links no JUCE at all, which is the point: if the engine disagrees with the C# it came
+# from, nothing built on top of it is worth debugging. Run it before the plugin.
+#
+add_executable(ConformanceCheck
+    Tests/ConformanceCheck.cpp
+    Source/S950/Voice.cpp
+    Source/S950/Engine.cpp)
+
+target_include_directories(ConformanceCheck PRIVATE Source/S950 Tests)
+
+enable_testing()
+add_test(NAME conformance COMMAND ConformanceCheck)

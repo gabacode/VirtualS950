@@ -24,3 +24,6 @@ inventory*.csv
 # Visual Studio's own cache for a folder it has been asked to open. Some of it is held
 # open while the IDE is running, so git cannot even read it to decide.
 .vs/
+
+# CMake's build tree for the plugin, and JUCE's compiled artefacts inside it.
+Plugin/build/
