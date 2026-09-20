@@ -126,7 +126,7 @@ namespace AkaiS950Studio
         public MainForm(string[] startupPaths)
         {
             _startupPaths = startupPaths;
-            Text = "Akai S950 Studio";
+            Text = AppTitle;
             Width = 1100;
             Height = 720;
             StartPosition = FormStartPosition.CenterScreen;
@@ -1326,10 +1326,44 @@ namespace AkaiS950Studio
                 ? "&Delete " + sel.Entry.TypeName + " " + sel.Entry.Name.Trim() + "..."
                 : "&Delete File...";
 
-            Text = "Akai S950 Studio" +
+            Text = AppTitle +
                    (modified == 0 ? "" :
                     modified == 1 ? "  -  1 disk with unsaved changes"
                                   : "  -  " + modified + " disks with unsaved changes");
+        }
+
+        /*
+         * The name, and when this copy of it was built.
+         *
+         * The web version carries a build stamp beside its title so that a browser
+         * running a cached copy is obvious at a glance rather than after an hour of
+         * hunting a bug that was fixed. A program on disk has the same problem in a
+         * different costume: the executable cannot be replaced while it is running,
+         * so a build can quietly not happen and the window looks identical either
+         * way. That has now happened twice.
+         *
+         * Taken from the file rather than from a constant somebody has to remember
+         * to bump, because the whole point is that it cannot be out of date.
+         */
+        static string _appTitle;
+
+        static string AppTitle
+        {
+            get
+            {
+                if (_appTitle != null) return _appTitle;
+
+                _appTitle = "Akai S950 Studio";
+                try
+                {
+                    string exe = System.Reflection.Assembly.GetExecutingAssembly().Location;
+                    if (!string.IsNullOrEmpty(exe) && File.Exists(exe))
+                        _appTitle += "   " + File.GetLastWriteTime(exe).ToString("yyyy-MM-dd HH:mm");
+                }
+                catch { /* a title that throws is worse than a title without a date */ }
+
+                return _appTitle;
+            }
         }
 
         /// <summary>Delete whichever of the two deletable file types is selected.</summary>
