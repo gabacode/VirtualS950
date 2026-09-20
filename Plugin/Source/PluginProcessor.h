@@ -3,6 +3,7 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 
 #include "S950/Engine.h"
+#include "S950/Disk.h"
 
 #include <memory>
 
@@ -55,6 +56,28 @@ public:
     /// What is loaded, for the editor to name.
     juce::String getPatchName() const;
 
+    // ------------------------------------------------------------------------- disks
+
+    /*
+     * Open an image and load its first programme.
+     *
+     * Message thread only. Decoding a disk allocates and takes long enough to matter, which
+     * is exactly why the engine takes a finished patch rather than a disk: none of this can
+     * happen anywhere near the audio thread.
+     */
+    bool loadDisk (const juce::File& file, juce::String& error);
+
+    /// The programmes on the disk that is open, in directory order.
+    juce::StringArray getProgramNames() const;
+
+    /// Play one of them. Out of range does nothing.
+    void selectProgram (int index);
+
+    int getSelectedProgram() const { return selectedProgram; }
+
+    /// The disk that is open, or an empty string.
+    juce::String getDiskName() const;
+
 private:
     void timerCallback() override;
 
@@ -76,6 +99,18 @@ private:
      */
     std::unique_ptr<s950::Engine> engine;
     s950::PatchPtr               patch;
+
+    /*
+     * The disk that is open, if one is.
+     *
+     * Kept whole rather than only the programme built from it, so the programme can be
+     * changed without reading the file again - and so that saving the plugin's state can
+     * one day put the entire 800K image in the host's project, which is what stops a saved
+     * song from ever losing the sound it was made with.
+     */
+    std::unique_ptr<s950::Disk> disk;
+    juce::StringArray           programNames;
+    int                         selectedProgram = -1;
 
     /// The engine renders one channel; the host usually wants two. Sized in prepareToPlay,
     /// because processBlock is not allowed to allocate.

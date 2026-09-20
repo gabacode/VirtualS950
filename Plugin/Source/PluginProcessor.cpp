@@ -211,6 +211,76 @@ void VirtualS950Processor::setStateInformation (const void* data, int size)
             parameters.replaceState (juce::ValueTree::fromXml (*xml));
 }
 
+// ---------------------------------------------------------------------------- disks
+
+bool VirtualS950Processor::loadDisk (const juce::File& file, juce::String& error)
+{
+    auto opened = std::make_unique<s950::Disk>();
+
+    std::string why;
+    if (! opened->loadFile (file.getFullPathName().toStdString(), why))
+    {
+        error = juce::String (why);
+        return false;
+    }
+
+    juce::StringArray names;
+    for (const auto& e : opened->getEntries())
+        if (e.type == 'P')
+            names.add (juce::String (e.name));
+
+    if (names.isEmpty())
+    {
+        error = "that disk has no programmes on it";
+        return false;
+    }
+
+    disk         = std::move (opened);
+    programNames = names;
+    selectedProgram = -1;
+
+    selectProgram (0);
+    return true;
+}
+
+juce::StringArray VirtualS950Processor::getProgramNames() const
+{
+    return programNames;
+}
+
+juce::String VirtualS950Processor::getDiskName() const
+{
+    return disk != nullptr ? juce::String (disk->getName()) : juce::String();
+}
+
+void VirtualS950Processor::selectProgram (int index)
+{
+    if (disk == nullptr || index < 0 || index >= programNames.size())
+        return;
+
+    // The nth programme in directory order, which is the order getProgramNames built.
+    const s950::Disk::Entry* entry = nullptr;
+    int seen = 0;
+
+    for (const auto& e : disk->getEntries())
+    {
+        if (e.type != 'P') continue;
+        if (seen++ == index) { entry = &e; break; }
+    }
+
+    if (entry == nullptr) return;
+
+    auto built = disk->buildPatch (*entry);
+    if (built == nullptr || built->keygroups.empty())
+        return;                                    // leave what is playing alone
+
+    selectedProgram = index;
+    patch = built;
+
+    if (engine != nullptr)
+        engine->setPatch (patch);
+}
+
 // ------------------------------------------------------------------- for the editor
 
 int VirtualS950Processor::getActiveVoices() const

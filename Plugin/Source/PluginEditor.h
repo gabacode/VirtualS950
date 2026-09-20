@@ -29,11 +29,20 @@ private:
 
     VirtualS950Processor& processor;
 
+    void openDisk();
+
     juce::Slider gain { juce::Slider::RotaryHorizontalVerticalDrag,
                         juce::Slider::TextBoxBelow };
     juce::Label  gainLabel;
     juce::Label  patchLabel;
     juce::Label  voicesLabel;
+
+    juce::TextButton loadButton { "Load disk..." };
+    juce::ComboBox   programs;
+
+    /// Held for as long as the dialog is open: launchAsync returns at once, and a chooser
+    /// that goes out of scope takes its window with it.
+    std::unique_ptr<juce::FileChooser> chooser;
 
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> gainAttachment;
 
