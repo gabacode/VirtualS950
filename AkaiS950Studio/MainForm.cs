@@ -31,6 +31,21 @@ namespace AkaiS950Studio
         readonly WaveformView _wave = new WaveformView();
         readonly Label _waveHeader = new Label();
         readonly Panel _wavePanel = new Panel();
+
+        // The strip over the waveform and the column beside it. The work these do was
+        // only ever on the right-click menu, which is a poor place for the five things
+        // you reach for most while looking at a waveform.
+        readonly Panel _waveBar = new Panel();
+        readonly Panel _waveActions = new Panel();
+        readonly Panel _waveSide = new Panel();
+
+        Button _btnTrim, _btnHalve, _btnFit, _btnFindLoop, _btnSlice, _btnPlay, _btnStop;
+
+        // What the waveform is showing, so the buttons over it act on the same thing
+        // the eye is on - which is not always what the tree has selected, since
+        // picking a keygroup shows that keygroup's sample.
+        AkaiDisk _waveDisk;
+        AkaiEntry _waveEntry;
         readonly StatusStrip _status = new StatusStrip();
         readonly ToolStripStatusLabel _statusText = new ToolStripStatusLabel();
         readonly ToolStripProgressBar _progress = new ToolStripProgressBar();
@@ -300,6 +315,26 @@ namespace AkaiS950Studio
             _kgHeader.Font = new Font(Font, FontStyle.Bold);
             _kgHeader.Text = "Keygroups";
 
+            // Add and Delete under the list, where the web puts them. Both already
+            // existed on the list's right-click menu, which is not where you look
+            // for them.
+            var kgButtons = new Panel { Dock = DockStyle.Bottom, Height = 30 };
+            var addKg = new Button
+            {
+                Text = "Add", Width = 54, Height = 24, Location = new Point(2, 3),
+                FlatStyle = FlatStyle.System, TabStop = false
+            };
+            var delKg = new Button
+            {
+                Text = "Delete", Width = 54, Height = 24, Location = new Point(60, 3),
+                FlatStyle = FlatStyle.System, TabStop = false
+            };
+            addKg.Click += (s, e) => OnKeygroupButton(true);
+            delKg.Click += (s, e) => OnKeygroupButton(false);
+            kgButtons.Controls.Add(addKg);
+            kgButtons.Controls.Add(delKg);
+            _kgButtons = kgButtons;
+
             _keygroups.Dock = DockStyle.Fill;
             _keygroups.View = View.Details;
             _keygroups.FullRowSelect = true;
@@ -333,6 +368,7 @@ namespace AkaiS950Studio
             // on top and the list fills the rest.
             _kgPanel.Dock = DockStyle.Fill;
             _kgPanel.Controls.Add(_keygroups);
+            _kgPanel.Controls.Add(_kgButtons);
             _kgPanel.Controls.Add(_kgHeader);
 
             var tabSummary = new TabPage("Summary");
@@ -365,17 +401,29 @@ namespace AkaiS950Studio
             _keygroups.DoubleClick += (s, e) => PlayCurrent(true);
             _keygroups.MouseUp += OnKeygroupRightClick;
 
-            _waveHeader.Dock = DockStyle.Top;
-            _waveHeader.Height = 22;
+            _waveHeader.Dock = DockStyle.Fill;
             _waveHeader.TextAlign = ContentAlignment.MiddleLeft;
             _waveHeader.Padding = new Padding(4, 0, 0, 0);
             _waveHeader.Font = new Font(Font, FontStyle.Bold);
             _waveHeader.Text = "Waveform";
 
+            BuildWaveButtons();
+
+            // Title on the left of the strip, the actions on the right of it.
+            _waveBar.Dock = DockStyle.Top;
+            _waveBar.Height = 30;
+            _waveBar.Controls.Add(_waveHeader);
+            _waveBar.Controls.Add(_waveActions);
+
             _wave.Dock = DockStyle.Fill;
             _wavePanel.Dock = DockStyle.Fill;
+
+            // Docking resolves from the last added backwards: the strip takes the full
+            // width at the top, the column takes the right of what is left, and the
+            // waveform fills the rest.
             _wavePanel.Controls.Add(_wave);
-            _wavePanel.Controls.Add(_waveHeader);
+            _wavePanel.Controls.Add(_waveSide);
+            _wavePanel.Controls.Add(_waveBar);
 
             // The waveform is docked along the bottom, under everything, so it stays
             // visible whichever keygroup is being worked on.
@@ -471,14 +519,31 @@ namespace AkaiS950Studio
             var envPanel = new Panel { Dock = DockStyle.Fill };
             envPanel.Controls.Add(stack);
 
+            /*
+             * The keygroup editor, laid out as the web version lays it out: the
+             * envelopes over the velocity and LFO sliders, with both zones and the
+             * flags in a column beside them.
+             *
+             * The property grid stays for a programme or a sample, which have a handful
+             * of fields each and no shape worth drawing. A keygroup has thirty, and a
+             * grid turns them into a list of names you read one at a time rather than a
+             * picture of a patch.
+             */
+            var keygroupPane = BuildKeygroupPane(envPanel);
+            var zonePane = BuildZonePane();
+
+            var keygroupSide = new Panel { Dock = DockStyle.Fill };
+            keygroupSide.Controls.Add(keygroupPane);
+            keygroupSide.Controls.Add(zonePane);
+
             var split = new SplitContainer
             {
                 Dock = DockStyle.Fill,
                 Orientation = Orientation.Vertical
             };
             split.Panel1.Controls.Add(_props);
-            split.Panel2.Controls.Add(envPanel);
-            split.Panel2Collapsed = true;      // only a keygroup has envelopes
+            split.Panel2.Controls.Add(keygroupSide);
+            split.Panel1Collapsed = true;      // a keygroup uses the pane, not the grid
             _editSplit = split;
             return split;
         }
@@ -710,10 +775,12 @@ namespace AkaiS950Studio
                 var diskNode = new TreeNode { Tag = d, Name = label + "  (" + d.Entries.Count + ")" };
                 MarkDiskNode(diskNode, d);
 
+                // Programmes and samples only. A disk carries a drum set and an overall
+                // record too, but neither can be edited or played here, so listing them
+                // put two groups in the way of the two you actually work in. The summary
+                // still counts them, so a disk that has them does not look empty of them.
                 AddGroup(diskNode, d, "Programs", 'P');
                 AddGroup(diskNode, d, "Samples", 'S');
-                AddGroup(diskNode, d, "Drum sets", 'D');
-                AddGroup(diskNode, d, "Overall", 'O');
 
                 _tree.Nodes.Add(diskNode);
             }
@@ -987,8 +1054,92 @@ namespace AkaiS950Studio
         }
 
         /// <summary>Draws a sample in the waveform pane, or clears it when there is none.</summary>
+        /*
+         * The buttons over and beside the waveform.
+         *
+         * Laid out by hand rather than with a FlowLayoutPanel: the strip is one fixed
+         * row that never wraps, and a flow panel that is docked and auto-sizing is more
+         * ways for that to go wrong than positions are to write down.
+         *
+         * Every one of them calls the same method the right-click menu calls. Two ways
+         * to reach a thing is fine; two implementations of it is not.
+         */
+        void BuildWaveButtons()
+        {
+            _btnTrim = WaveButton("Trim silence", 92, (s, e) => OnWaveAction(TrimSilence));
+            _btnHalve = WaveButton("Halve rate", 84, (s, e) => OnWaveAction(HalveSampleRate));
+            _btnFit = WaveButton("Fit to tempo", 92, (s, e) => OnWaveAction(StretchSample));
+            _btnFindLoop = WaveButton("Find loop", 78, (s, e) => OnWaveAction(FindLoopFor));
+            _btnSlice = WaveButton("Slice", 60, (s, e) => OnWaveAction(SliceSampleFile));
+
+            int x = 0;
+            foreach (Button b in new[] { _btnTrim, _btnHalve, _btnFit, _btnFindLoop, _btnSlice })
+            {
+                b.Location = new Point(x, 3);
+                _waveActions.Controls.Add(b);
+                x += b.Width + 4;
+            }
+            _waveActions.Dock = DockStyle.Right;
+            _waveActions.Width = x + 4;
+
+            _btnPlay = WaveButton("Play", 96, OnPlay);
+            _btnStop = WaveButton("Stop", 96, OnStopPlay);
+            _btnPlay.Location = new Point(6, 6);
+            _btnStop.Location = new Point(6, 36);
+
+            _waveSide.Dock = DockStyle.Right;
+            _waveSide.Width = 110;
+            _waveSide.Controls.Add(_btnPlay);
+            _waveSide.Controls.Add(_btnStop);
+        }
+
+        static Button WaveButton(string text, int width, EventHandler onClick)
+        {
+            var b = new Button
+            {
+                Text = text,
+                Size = new Size(width, 24),
+                FlatStyle = FlatStyle.System,
+
+                // The keyboard and the waveform want the focus; a button that steals it
+                // would eat the next key press meant for the instrument.
+                TabStop = false
+            };
+            b.Click += onClick;
+            return b;
+        }
+
+        /// <summary>Run one of the sample edits on whatever the waveform is showing.</summary>
+        void OnWaveAction(Action<FileRef> what)
+        {
+            if (_waveDisk == null || _waveEntry == null || _waveEntry.Type != 'S') return;
+            what(new FileRef(_waveDisk, _waveEntry));
+        }
+
+        /// <summary>Only a sample can be trimmed, halved, stretched, looped or sliced.</summary>
+        void UpdateWaveButtons()
+        {
+            bool sample = _waveEntry != null && _waveEntry.Type == 'S';
+
+            _btnTrim.Enabled = sample;
+            _btnFit.Enabled = sample;
+            _btnFindLoop.Enabled = sample;
+            _btnSlice.Enabled = sample;
+            _btnPlay.Enabled = sample;
+
+            // The rate it would become is worth seeing before pressing it.
+            _btnHalve.Enabled = sample;
+            _btnHalve.Text = sample
+                ? "Halve to " + (_waveEntry.SampleRate / 2000.0).ToString("0.#") + "k"
+                : "Halve rate";
+        }
+
         void ShowWaveform(AkaiDisk d, AkaiEntry e)
         {
+            _waveDisk = d;
+            _waveEntry = e;
+            UpdateWaveButtons();
+
             if (d == null || e == null || e.Type != 'S')
             {
                 _wave.Clear();
@@ -1776,7 +1927,12 @@ namespace AkaiS950Studio
         void ShowEditor(FileRef f)
         {
             _editDisk = f != null ? f.Disk : null;
-            _editSplit.Panel2Collapsed = true;      // envelopes belong to a keygroup
+
+            // The pane belongs to a keygroup; anything else is a grid of a few fields.
+            LoadKeygroupPane(null, null, 0, 0);
+            _editSplit.Panel1Collapsed = false;
+            _editSplit.Panel2Collapsed = true;
+
             if (f == null) { _props.SelectedObject = null; return; }
 
             if (f.Entry.Type == 'P') _props.SelectedObject = new ProgramEditor(f.Disk, f.Entry);
@@ -1797,7 +1953,22 @@ namespace AkaiS950Studio
             try
             {
                 _vcaEnv.SetValues(kg.VcaAttack, kg.VcaDecay, kg.VcaSustain, kg.VcaRelease);
-                _vcfEnv.SetValues(kg.VcfAttack, kg.VcfDecay, kg.VcfSustain, kg.VcfRelease);
+
+                /*
+                 * A VCF envelope that was never written is four spaces - 0x20 - left
+                 * over from the padding, and drawing that as 32/32/32/32 is a shape
+                 * the sampler will not play. AkaiS950Engine already ignores those
+                 * bytes and runs the filter wide open, so show what will be heard:
+                 * no attack, no decay, full sustain. The web version draws the same
+                 * thing for the same reason.
+                 */
+                bool vcf = AkaiS950Engine.KeygroupPatch.LooksWritten(
+                    kg.VcfAttack, kg.VcfDecay, kg.VcfSustain, kg.VcfRelease);
+
+                if (vcf)
+                    _vcfEnv.SetValues(kg.VcfAttack, kg.VcfDecay, kg.VcfSustain, kg.VcfRelease);
+                else
+                    _vcfEnv.SetValues(0, 0, 99, 0);
                 _vcfAmount.Value = Math.Max(_vcfAmount.Minimum,
                                    Math.Min(_vcfAmount.Maximum, kg.VcfAmount));
                 _vcfAmountLabel.Text = "amt" + Environment.NewLine + kg.VcfAmount.ToString("+0;-0;0");
@@ -1903,8 +2074,12 @@ namespace AkaiS950Studio
             if (i < 0 || i >= AkaiDisk.KeygroupCount(f.Entry)) return;
 
             _editDisk = f.Disk;
-            _props.SelectedObject = new KeygroupEditor(f.Disk, f.Entry, i,
-                                                      picked.GetRange(1, picked.Count - 1));
+
+            var editor = new KeygroupEditor(f.Disk, f.Entry, i,
+                                            picked.GetRange(1, picked.Count - 1));
+
+            _editSplit.Panel1Collapsed = true;          // the pane, not the grid
+            LoadKeygroupPane(editor, f.Disk, i, AkaiDisk.KeygroupCount(f.Entry));
             _rightTabs.SelectedIndex = 1;
 
             var groups = f.Disk.Keygroups(f.Entry);
