@@ -1,0 +1,15 @@
+# Built by build.ps1 from the source beside it.
+*.exe
+*.pdb
+
+# The disk library is 101 images of Akai's audio and other people's records. The checks
+# read it when it is pointed at one; it does not belong in a public repository.
+#
+#   .\test.ps1 -Images D:\wherever
+*.hfe
+*.img
+*.wav
+
+# Working output from the command-line tool: inventories of whatever disks were to hand.
+inventory*.csv
+*programs-by-disk*

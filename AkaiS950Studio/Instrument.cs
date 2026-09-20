@@ -1,0 +1,293 @@
+using System;
+using System.Collections.Generic;
+using AkaiS950Engine;
+using AkaiS950List;
+
+namespace AkaiS950Studio
+{
+    /// <summary>
+    /// The instrument: a disk, an engine, a sound card and a MIDI port.
+    ///
+    /// This is the only place that knows about both halves. AkaiS950Engine knows nothing of
+    /// disks, and AkaiDisk knows nothing of audio - which is what lets the same engine be
+    /// driven by a plugin host later without either of them being disturbed.
+    ///
+    /// Everything here is safe to call from the UI thread. The engine's note queue is
+    /// lock-free, so a click on the keyboard, a MIDI note from winmm's callback thread and
+    /// the audio thread reading the queue never wait on each other.
+    /// </summary>
+    internal sealed class Instrument : IDisposable
+    {
+        readonly Engine _engine;
+        readonly WasapiOut _out;
+        MidiIn _midi;
+
+        // Decoding a sample is slow enough to matter and the same one is played over and
+        // over, so it is kept. Keyed on the entry itself, which is a new object each time
+        // the directory is re-read - so a reload quietly invalidates the lot.
+        readonly Dictionary<AkaiEntry, Sound> _sounds = new Dictionary<AkaiEntry, Sound>();
+
+        /// <summary>
+        /// How much of the loop join to crossfade, in milliseconds, and whether to pull the
+        /// ends onto zero crossings first. Zero and false is what the S950 itself does.
+        /// </summary>
+        public double LoopCrossfadeMs = LoopSmoothing.DefaultCrossfadeMs;
+        public bool SnapLoopsToZero = true;
+
+        public bool Running { get; private set; }
+        public string Error { get; private set; }
+        public double LatencyMs { get { return _out.LatencyMs; } }
+        public int SampleRate { get { return _out.SampleRate; } }
+        public int ActiveVoices { get { return _engine.ActiveVoices; } }
+
+        public Instrument()
+        {
+            // The engine is built before the output, because opening the output calls the
+            // fill callback once to prime the buffer.
+            _engine = new Engine(48000);
+            _out = new WasapiOut(Fill);
+        }
+
+        public bool Start()
+        {
+            if (Running) return true;
+
+            if (!_out.Start(10))
+            {
+                Error = _out.Error;
+                return false;
+            }
+
+            // The card decides the rate, not us. Rebuilding is cheaper than resampling
+            // every voice, and this happens once.
+            if (_out.SampleRate != (int)_engine.SampleRate)
+            {
+                _out.Stop();
+                var again = new Engine(_out.SampleRate);
+                again.SetPatch(_patch);
+                _engineAtRate = again;
+                if (!_out.Start(10)) { Error = _out.Error; return false; }
+            }
+
+            Running = true;
+            return true;
+        }
+
+        // The engine actually in use: the one built at the card's rate, if there is one.
+        Engine _engineAtRate;
+        Engine Live { get { return _engineAtRate ?? _engine; } }
+
+        Patch _patch;
+
+        void Fill(float[] mono, int frames) { Live.Render(mono, 0, frames); }
+
+        // ------------------------------------------------------------------- playing
+
+        public void NoteOn(int note, int velocity) { Live.NoteOn(note, velocity); }
+        public void NoteOff(int note) { Live.NoteOff(note); }
+        public void AllNotesOff() { Live.AllNotesOff(); }
+
+        public float Gain
+        {
+            get { return Live.Gain; }
+            set { _engine.Gain = value; if (_engineAtRate != null) _engineAtRate.Gain = value; }
+        }
+
+        // ---------------------------------------------------------------------- MIDI
+
+        public static List<string> MidiPorts() { return MidiIn.Ports(); }
+
+        public bool OpenMidi(int port)
+        {
+            CloseMidi();
+            _midi = new MidiIn(OnMidi);
+            if (_midi.Start(port)) return true;
+            Error = _midi.Error;
+            _midi = null;
+            return false;
+        }
+
+        public void CloseMidi()
+        {
+            if (_midi == null) return;
+            _midi.Dispose();
+            _midi = null;
+        }
+
+        /// <summary>
+        /// Called on winmm's own thread. Posts into the engine and does nothing else - no
+        /// UI, no locks, nothing that could keep the MIDI driver waiting.
+        /// </summary>
+        void OnMidi(int status, int d1, int d2)
+        {
+            int kind = status & 0xF0;
+
+            if (kind == 0x90 && d2 > 0) Live.NoteOn(d1, d2);
+            else if (kind == 0x80 || (kind == 0x90 && d2 == 0)) Live.NoteOff(d1);
+            else if (kind == 0xB0 && d1 == 1) Live.Modwheel(d2);
+            else if (kind == 0xB0 && (d1 == 120 || d1 == 123)) Live.AllNotesOff();
+        }
+
+        // ------------------------------------------------------------------- patches
+
+        /// <summary>
+        /// Load a programme. Everything the engine needs is copied out now, so playing a
+        /// note never touches the disk image or the directory.
+        /// </summary>
+        public void SetProgram(AkaiDisk disk, AkaiEntry program)
+        {
+            if (disk == null || program == null || program.Type != 'P')
+            {
+                _patch = null;
+                Live.SetPatch(null);
+                return;
+            }
+
+            var patch = new Patch { Name = program.Name.Trim() };
+            var groups = disk.Keygroups(program);
+
+            for (int i = 0; i < groups.Count; i++)
+            {
+                AkaiDisk.Keygroup kg = groups[i];
+
+                // Both zones sound, which is how a programme layers two samples on one key.
+                AddZone(disk, patch, kg, kg.Zone1);
+                if (kg.HasSecondZone) AddZone(disk, patch, kg, kg.Zone2);
+            }
+
+            _patch = patch;
+            Live.SetPatch(patch);
+        }
+
+        void AddZone(AkaiDisk disk, Patch patch, AkaiDisk.Keygroup kg, AkaiDisk.Zone zone)
+        {
+            if (zone == null || string.IsNullOrEmpty(zone.Name)) return;
+
+            AkaiEntry sample = FindSample(disk, zone.Name);
+            if (sample == null) return;
+
+            Sound sound = SoundFor(disk, sample);
+            if (sound == null) return;
+
+            patch.Keygroups.Add(new KeygroupPatch
+            {
+                LowKey = kg.LowKey,
+                HighKey = kg.HighKey,
+                Sound = sound,
+
+                VcaAttack = kg.VcaAttack, VcaDecay = kg.VcaDecay,
+                VcaSustain = kg.VcaSustain, VcaRelease = kg.VcaRelease,
+
+                VcfWritten = KeygroupPatch.LooksWritten(kg.VcfAttack, kg.VcfDecay,
+                                                        kg.VcfSustain, kg.VcfRelease),
+                VcfAttack = kg.VcfAttack, VcfDecay = kg.VcfDecay,
+                VcfSustain = kg.VcfSustain, VcfRelease = kg.VcfRelease,
+                VcfAmount = kg.VcfAmount,
+
+                VelToFilter = kg.VelToFilter,
+                KeyToFilter = kg.KeyToFilter,
+                VelToLoudness = kg.VelToLoudness,
+
+                LfoDelay = kg.LfoDelay, LfoRate = kg.LfoRate, LfoDepth = kg.LfoDepth,
+                LfoModwheelDepth = kg.LfoModwheelDepth, LfoDesync = kg.LfoDesync,
+
+                ZoneFilter = zone.Filter,
+                ZoneLoudness = zone.Loudness,
+                ZoneTranspose = zone.PitchOffset,
+
+                ConstantPitch = kg.ConstantPitch,
+                OneShot = kg.OneShot
+            });
+        }
+
+        /// <summary>One sample, decoded once and kept.</summary>
+        Sound SoundFor(AkaiDisk disk, AkaiEntry e)
+        {
+            Sound got;
+            if (_sounds.TryGetValue(e, out got)) return got;
+
+            short[] words = disk.SampleWords12(e);
+            if (words.Length == 0) return null;
+
+            var audio = new float[words.Length];
+            for (int i = 0; i < words.Length; i++) audio[i] = words[i] / 2048f;
+
+            // The machine plays end-length .. end, so the start follows from the length
+            // rather than from the stored start - which is simply zero in 250 of the
+            // library's 324 looped samples.
+            bool loops = e.LoopMode != 'O' && e.LoopLength > 0 && e.LoopEnd > 0;
+            int to = (int)Math.Min(e.LoopEnd, words.Length);
+            int from = (int)Math.Max(0, e.LoopEnd - e.LoopLength);
+
+            var sound = new Sound
+            {
+                Name = e.Name.Trim(),
+                Audio = audio,
+                SourceRate = e.SampleRate < 1000 ? 40000 : e.SampleRate,
+                RootPitch = e.NominalPitch + e.FinePitch / 16.0,
+                Loops = loops && to > from,
+                LoopFrom = from,
+                LoopTo = to
+            };
+
+            // Join the loop cleanly. The machine splices and clicks if the points are
+            // bad; this does not, which is the one place the instrument knowingly sounds
+            // better than the hardware. LoopCrossfadeMs = 0 turns it off.
+            LoopSmoothing.Polish(sound, LoopCrossfadeMs, SnapLoopsToZero);
+
+            _sounds[e] = sound;
+            return sound;
+        }
+
+        /// <summary>Forget the decoded audio - after an edit, or a reload.</summary>
+        public void Invalidate() { _sounds.Clear(); }
+
+        static AkaiEntry FindSample(AkaiDisk d, string name)
+        {
+            if (string.IsNullOrEmpty(name)) return null;
+            string want = name.Trim();
+
+            for (int i = 0; i < d.Entries.Count; i++)
+            {
+                AkaiEntry x = d.Entries[i];
+                if (x.Type == 'S' &&
+                    string.Equals(x.Name.Trim(), want, StringComparison.OrdinalIgnoreCase))
+                    return x;
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// Audition one sample on its own, with no keygroup around it.
+        ///
+        /// Built as a patch of one wide-open keygroup so it goes through the same engine as
+        /// everything else - a second playback path is a second thing to keep in step.
+        /// </summary>
+        public void PlaySample(AkaiDisk disk, AkaiEntry sample, int note)
+        {
+            Sound sound = SoundFor(disk, sample);
+            if (sound == null) return;
+
+            var patch = new Patch { Name = sound.Name };
+            patch.Keygroups.Add(new KeygroupPatch
+            {
+                LowKey = 0, HighKey = 127, Sound = sound,
+                VcaAttack = 0, VcaDecay = 0, VcaSustain = 99, VcaRelease = 0,
+                VcfWritten = true, VcfSustain = 99, ZoneFilter = 99,
+                LfoDesync = true
+            });
+
+            _patch = patch;
+            Live.SetPatch(patch);
+            Live.AllNotesOff();
+            Live.NoteOn(note, 100);
+        }
+
+        public void Dispose()
+        {
+            CloseMidi();
+            _out.Dispose();
+            Running = false;
+        }
+    }
+}

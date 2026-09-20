@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <RootNamespace>AkaiS950Studio</RootNamespace>
+    <AssemblyName>AkaiS950Studio</AssemblyName>
+    <Nullable>disable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+  </PropertyGroup>
+
+  <!-- Share the decoder and filesystem code with the command-line tool. -->
+  <ItemGroup>
+    <Compile Include="..\AkaiS950List\Hfe.cs" Link="Core\Hfe.cs" />
+    <Compile Include="..\AkaiS950List\HfeWrite.cs" Link="Core\HfeWrite.cs" />
+    <Compile Include="..\AkaiS950List\AkaiDisk.cs" Link="Core\AkaiDisk.cs" />
+    <Compile Include="..\AkaiS950List\AkaiDiskEdit.cs" Link="Core\AkaiDiskEdit.cs" />
+    <Compile Include="..\AkaiS950List\AkaiLoop.cs" Link="Core\AkaiLoop.cs" />
+  </ItemGroup>
+
+</Project>
