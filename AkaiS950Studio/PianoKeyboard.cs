@@ -459,6 +459,18 @@ namespace AkaiS950Studio
             int grp = GroupAt(note);
             if (grp < 0) return;
 
+            /*
+             * End whatever is already sounding first.
+             *
+             * A mouse-up can go missing - the list rebuilding under the pointer, another
+             * window taking the mouse, a click arriving while the last one is still being
+             * handled. Overwriting _sounding in that case orphans the note: nothing will
+             * ever raise KeyReleased for it, so nothing will ever release the voice, and a
+             * looped sample then plays until the program closes. Pressing keys quickly
+             * made it happen often enough to notice.
+             */
+            StopSounding();
+
             _sounding = note;
             Capture = true;            // so the release arrives even off the control
 

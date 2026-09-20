@@ -172,6 +172,12 @@ namespace AkaiS950Engine
             }
         }
 
+        /// <summary>
+        /// Let go of every voice holding this note.
+        ///
+        /// Every one, not the first: pressing the same key twice before releasing it is
+        /// ordinary, and leaving the older voice held would strand it.
+        /// </summary>
         void StopNote(int note)
         {
             for (int i = 0; i < _voices.Length; i++)
@@ -179,18 +185,38 @@ namespace AkaiS950Engine
                     _voices[i].Release();
         }
 
-        /// <summary>A free voice, or the oldest one if they are all busy.</summary>
+        /// <summary>
+        /// A voice to start a note on.
+        ///
+        /// Idle first, obviously. Then the oldest one that has already been let go and is
+        /// only fading - taking that costs a tail nobody is listening to. Only if every
+        /// voice is still held does it take one of those, and then the oldest.
+        ///
+        /// Taking the oldest regardless, which is what this did, would cut off a key the
+        /// player is holding while a released note was left ringing beside it - which
+        /// reads exactly like "the release did not happen".
+        /// </summary>
         Voice Take()
         {
             for (int i = 0; i < _voices.Length; i++)
                 if (!_voices[i].Active) return _voices[i];
 
-            int oldest = 0;
-            for (int i = 1; i < _voices.Length; i++)
-                if (_voices[i].StartedAt < _voices[oldest].StartedAt) oldest = i;
+            int pick = -1;
+            for (int i = 0; i < _voices.Length; i++)
+            {
+                if (_voices[i].Held) continue;                  // still down: leave it
+                if (pick < 0 || _voices[i].StartedAt < _voices[pick].StartedAt) pick = i;
+            }
 
-            _voices[oldest].Kill();
-            return _voices[oldest];
+            if (pick < 0)
+            {
+                pick = 0;
+                for (int i = 1; i < _voices.Length; i++)
+                    if (_voices[i].StartedAt < _voices[pick].StartedAt) pick = i;
+            }
+
+            _voices[pick].Kill();
+            return _voices[pick];
         }
 
         // ------------------------------------------------------------------- render

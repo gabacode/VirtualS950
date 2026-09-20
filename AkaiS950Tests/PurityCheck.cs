@@ -72,11 +72,25 @@ static class PurityCheck
 
         double f0 = 400.0 * Math.Pow(2, (note - 60) / 12.0);
 
-        // how far a partial can wander and still be itself: the vibrato's sweep, plus a
-        // little for the measurement
+        /*
+         * How far a partial can wander and still be itself.
+         *
+         * Its own sweep, and then the sidebands. Frequency modulation does not put the
+         * energy inside the sweep and stop: it spreads it into sidebands every LFO rate
+         * apart, whose strengths are Bessel functions of the modulation index, and the
+         * tail of those runs well past the deviation. At depth 99 the index is about 5,
+         * and the ninth sideband is still at -32 dB - which this test dutifully reported
+         * as a stray partial at 466 Hz until the arithmetic was done properly.
+         *
+         * Twelve sidebands of margin covers it to below -80 dB. On a 400 Hz carrier that
+         * is 85 Hz, so anything genuinely wrong - aliasing, or the 1500 Hz control block -
+         * is still nowhere near being excused.
+         */
+        double lfoHz = Cal.LfoRateHzAtZero + lfoRate * Cal.LfoRateHzPerUnit;
         double spread = lfoDepth > 0
-            ? Math.Pow(2, lfoDepth * 1.527 / 1200.0) - 1.0 + 0.01
+            ? Math.Pow(2, lfoDepth * Cal.LfoDepthCentsPerUnit / 1200.0) - 1.0 + 0.01
             : 0.01;
+        double sidebands = lfoDepth > 0 ? 12 * lfoHz : 0;
 
         int from = (int)(Rate * 0.4), len = 1 << 15;      // 0.68 s, a power of two
         if (from + len > audio.Length) len = audio.Length - from;
@@ -93,7 +107,8 @@ static class PurityCheck
             for (int k = 1; k * f0 < Rate / 2 + f0; k++)
             {
                 double centre = k * f0;
-                if (Math.Abs(f - centre) < centre * spread + 25) { belongs = true; break; }
+                if (Math.Abs(f - centre) < centre * spread + sidebands + 25)
+                { belongs = true; break; }
             }
             if (belongs) continue;
 

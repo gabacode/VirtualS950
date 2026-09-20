@@ -38,7 +38,7 @@ function Run-Check($name, $sources, $arguments) {
 
     $exe = Join-Path $env:TEMP "$name.exe"
     & $csc /nologo /unsafe /target:exe /main:$name /out:$exe `
-        /r:System.dll /r:System.Core.dll /r:System.Drawing.dll $sources
+        /r:System.dll /r:System.Core.dll /r:System.Drawing.dll /r:System.Windows.Forms.dll $sources
     if ($LASTEXITCODE -ne 0) {
         Write-Host "  did not compile" -ForegroundColor Red
         $script:failed += $name
@@ -51,6 +51,12 @@ function Run-Check($name, $sources, $arguments) {
 
 Run-Check "EngineCheck" (@(Join-Path $root "AkaiS950Tests\EngineCheck.cs") + $engine) $null
 Run-Check "LoopClickCheck" (@(Join-Path $root "AkaiS950Tests\LoopClickCheck.cs") + $engine) $null
+Run-Check "PurityCheck" (@(Join-Path $root "AkaiS950Tests\PurityCheck.cs") + $engine) $null
+
+# This one drives the real keyboard control through its own mouse handlers, because the
+# bug it guards lives in the bookkeeping between a press and a release. So it needs
+# WinForms and the control itself.
+Run-Check "StuckNoteCheck" (@(Join-Path $root "AkaiS950Tests\StuckNoteCheck.cs") + $engine + @(Join-Path $root "AkaiS950Studio\PianoKeyboard.cs")) $null
 
 if ($Images -ne "") {
     Run-Check "PatchCheck" `
