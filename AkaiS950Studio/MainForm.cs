@@ -82,48 +82,31 @@ namespace AkaiS950Studio
             return _instrumentOk;
         }
         /*
-         * Off. Selecting a file used to audition it, which is pleasant when you are
-         * browsing samples and ruinous everywhere else: the audition is a note nobody
-         * pressed, at note 60, wide open, and a looped sample auditioned this way runs
-         * until something else stops it. Clicking a key selects that key's keygroup, so
-         * every key press started one of these underneath the note it was supposed to
-         * play - and the loudest, longest-lived of them is what the ear then hears on
-         * every key. That is the "same sample plays for every keygroup" fault.
+         * Off. Selecting a file used to audition it, which is pleasant while browsing
+         * samples and ruinous everywhere else: the audition is a note nobody pressed,
+         * at note 60, with the filter wide open, and nothing will ever release it. A
+         * looped sample auditioned that way runs until something else stops it.
+         *
+         * Clicking a key selects that key's keygroup, so every key press started one of
+         * these underneath the note it was supposed to play. The loudest and
+         * longest-lived of them is then what the ear hears on every key, whichever key
+         * it was - which is why the waveform display and the audio disagreed.
          *
          * Playing is now something you ask for: double-click, Ctrl+P, or the keyboard.
          */
         readonly ToolStripMenuItem _autoPlay =
             new ToolStripMenuItem("Play on &Selection") { CheckOnClick = true, Checked = false };
 
-        readonly ToolStripMenuItem _recordItem = new ToolStripMenuItem("&Record to WAV...");
-        readonly ToolStripMenuItem _everyKeyItem =
-            new ToolStripMenuItem("Play &Every Keygroup");
-
-        readonly ToolStripMenuItem _defeatFilterItem =
-            new ToolStripMenuItem("Filter &Off (compare samples)") { CheckOnClick = true };
-
         readonly List<AkaiDisk> _disks = new List<AkaiDisk>();
         CancellationTokenSource _cts;
 
         readonly string[] _startupPaths;
 
-        /*
-         * --selftest[=<programme>] and --record=<file.wav>.
-         *
-         * Switches rather than a separate test harness, because the thing worth
-         * exercising is this window: the engine and the patch builder can already be
-         * driven from a console program, and driving them that way is what failed to
-         * reproduce the fault. Whatever the switches reach, a mouse reaches too.
-         */
-        string _selfTest;
-        string _selfTestWav = "";
-        bool _selfTestFlat;
-
         public MainForm() : this(null) { }
 
         public MainForm(string[] startupPaths)
         {
-            _startupPaths = TakeSwitches(startupPaths);
+            _startupPaths = startupPaths;
             Text = "Akai S950 Studio";
             Width = 1100;
             Height = 720;
@@ -179,34 +162,6 @@ namespace AkaiS950Studio
             catch (InvalidOperationException) { /* leave the defaults in place */ }
         }
 
-        /// <summary>
-        /// Pull the switches out of the command line and hand back the paths.
-        /// </summary>
-        string[] TakeSwitches(string[] args)
-        {
-            if (args == null) return null;
-            var paths = new List<string>();
-
-            foreach (string a in args)
-            {
-                if (a.StartsWith("--selftest", StringComparison.OrdinalIgnoreCase))
-                {
-                    int eq = a.IndexOf((char)61);
-                    _selfTest = eq >= 0 ? a.Substring(eq + 1) : "";
-                }
-                else if (a.StartsWith("--record=", StringComparison.OrdinalIgnoreCase))
-                {
-                    _selfTestWav = a.Substring("--record=".Length);
-                }
-                else if (string.Equals(a, "--nofilter", StringComparison.OrdinalIgnoreCase))
-                {
-                    _selfTestFlat = true;
-                }
-                else paths.Add(a);
-            }
-            return paths.ToArray();
-        }
-
         /// <summary>A path on the command line (a folder, drive or image) loads at startup.</summary>
         protected override async void OnShown(EventArgs e)
         {
@@ -225,8 +180,6 @@ namespace AkaiS950Studio
 
             files.Sort(StringComparer.OrdinalIgnoreCase);
             await LoadFiles(files.ToArray());
-
-            if (_selfTest != null) await RunSelfTest(_selfTest, _selfTestWav);
         }
 
         // ---------------------------------------------------------------- menu
@@ -296,17 +249,9 @@ namespace AkaiS950Studio
                 ShortcutKeys = Keys.Control | Keys.OemPeriod,
                 ShortcutKeyDisplayString = "Ctrl+."
             };
-            _recordItem.Click += OnRecord;
-            _everyKeyItem.Click += OnPlayEveryKeygroup;
-            _defeatFilterItem.CheckedChanged += (s, e) =>
-            {
-                if (_instrumentOk) _instrument.DefeatFilter = _defeatFilterItem.Checked;
-            };
-
             play.DropDownItems.AddRange(new ToolStripItem[]
             {
-                playNow, stopNow, new ToolStripSeparator(), _autoPlay,
-                new ToolStripSeparator(), _everyKeyItem, _defeatFilterItem, _recordItem
+                playNow, stopNow, new ToolStripSeparator(), _autoPlay
             });
 
             var help = new ToolStripMenuItem("&Help");
@@ -1081,8 +1026,8 @@ namespace AkaiS950Studio
         ///
         /// The selection still has to move - the editor, the waveform and the piano all
         /// follow it - but it must not audition on the way past, because the key is
-        /// already sounding the note. Suppressing the selection outright instead would
-        /// leave the panes showing the wrong keygroup.
+        /// already sounding the note. Suppressing the selection itself would instead
+        /// leave the panes describing the wrong keygroup.
         /// </summary>
         bool _selectingFromKey;
 
@@ -2118,158 +2063,10 @@ namespace AkaiS950Studio
             return s;
         }
 
-        // ------------------------------------------------------- recording the keys
-
-        /*
-         * Recording and self-playing, together, because neither is much use alone.
-         *
-         * "The same sample plays for every keygroup" could not be reproduced from outside
-         * the window - driven directly, the engine, the patch builder and the editor own
-         * call sequence all route correctly. What could not be reached was the thing the
-         * ear is actually judging: the mix leaving the sound card. So the app records
-         * itself, and plays itself, and what comes out is a file that can be cut at the
-         * marks and measured. It stops being a matter of opinion.
-         *
-         * It earns its place beyond the bug. An instrument that can render a pass of its
-         * own playing is an instrument you can regression-test.
-         */
-
-        void OnRecord(object sender, EventArgs e)
-        {
-            if (!EnsureInstrument()) { SetStatus("No audio output - cannot record."); return; }
-
-            if (_instrument.Recording)
-            {
-                string done = _instrument.StopRecording();
-                _recordItem.Text = "&Record to WAV...";
-                _recordItem.Checked = false;
-                SetStatus("Recorded " + done);
-                return;
-            }
-
-            using (var dlg = new SaveFileDialog
-            {
-                Title = "Record the instrument to",
-                Filter = "Wave files (*.wav)|*.wav",
-                FileName = (SelectedFile != null ? SafeName(SelectedFile.Entry.Name.Trim())
-                                                 : "VirtualS950") + ".wav"
-            })
-            {
-                if (dlg.ShowDialog(this) != DialogResult.OK) return;
-                if (!_instrument.StartRecording(dlg.FileName))
-                {
-                    SetStatus("Could not start recording. " + _instrument.Error);
-                    return;
-                }
-            }
-
-            _recordItem.Text = "Stop &Recording";
-            _recordItem.Checked = true;
-            SetStatus("Recording. Play, then stop it from the Play menu.");
-        }
-
-        static string SafeName(string name)
-        {
-            foreach (char c in System.IO.Path.GetInvalidFileNameChars())
-                name = name.Replace(c, (char)95);
-            return name.Length == 0 ? "VirtualS950" : name;
-        }
-
-        void OnPlayEveryKeygroup(object sender, EventArgs e)
-        {
-            var running = PlayEveryKeygroup(2000, 700);
-            GC.KeepAlive(running);
-        }
-
-        /// <summary>
-        /// Strike one key in every keygroup of the selected programme, in turn.
-        ///
-        /// Through OnPianoKey and OnPianoKeyUp - the handlers the mouse raises, not a
-        /// shortcut past them - so whatever a click does, this does. A shortcut would
-        /// exercise the wrong path, and the wrong path is the one that already works.
-        /// </summary>
-        async System.Threading.Tasks.Task PlayEveryKeygroup(int holdMs, int gapMs)
-        {
-            var f = SelectedFile;
-            if (f == null || f.Entry.Type != (char)80)
-            {
-                SetStatus("Select a programme first.");
-                return;
-            }
-
-            var groups = f.Disk.Keygroups(f.Entry);
-            if (groups.Count == 0) { SetStatus("That programme has no keygroups."); return; }
-
-            _everyKeyItem.Enabled = false;
-            try
-            {
-                for (int g = 0; g < groups.Count; g++)
-                {
-                    var kg = groups[g];
-                    int note = (kg.LowKey + kg.HighKey) / 2;
-                    if (note < 0) note = 0; else if (note > 127) note = 127;
-
-                    SetStatus("Keygroup " + (g + 1) + " of " + groups.Count +
-                              " at " + NoteName(note) + "...");
-
-                    OnPianoKey(g, note);
-                    await System.Threading.Tasks.Task.Delay(holdMs);
-                    OnPianoKeyUp(note);
-                    await System.Threading.Tasks.Task.Delay(gapMs);
-                }
-                SetStatus("Played all " + groups.Count + " keygroups.");
-            }
-            finally { _everyKeyItem.Enabled = true; }
-        }
-
-        /// <summary>
-        /// The unattended version: load, play every keygroup of one programme, write the
-        /// recording, close. Everything the two menu items do, without a hand on the
-        /// mouse, so a pass can be captured and measured as part of a build.
-        /// </summary>
-        async System.Threading.Tasks.Task RunSelfTest(string programme, string wav)
-        {
-            AkaiEntry want = null;
-            AkaiDisk on = null;
-
-            foreach (var d in _disks)
-                foreach (var x in d.Entries)
-                    if (want == null && x.Type == (char)80 &&
-                        (programme.Length == 0 ||
-                         string.Equals(x.Name.Trim(), programme, StringComparison.OrdinalIgnoreCase)))
-                    { want = x; on = d; }
-
-            if (want == null) { SetStatus("No programme called " + programme); Close(); return; }
-
-            SelectFileNode(on, want);
-            await System.Threading.Tasks.Task.Delay(400);
-
-            if (!EnsureInstrument()) { SetStatus("no audio output"); Close(); return; }
-
-            _instrument.DefeatFilter = _selfTestFlat;
-            _defeatFilterItem.Checked = _selfTestFlat;
-            if (wav.Length > 0 && !_instrument.StartRecording(wav))
-            {
-                SetStatus("could not record: " + _instrument.Error);
-                Close();
-                return;
-            }
-
-            await PlayEveryKeygroup(2000, 700);
-            await System.Threading.Tasks.Task.Delay(500);
-
-            _instrument.StopRecording();
-            Close();
-        }
         /// <summary>Letting go of a key stops the note it started.</summary>
         void OnPianoKeyUp(int note)
         {
-            if (!_instrumentOk) return;
-
-            // read BEFORE the release, while the voice is still reading its sample
-            string voices = _instrument.SoundingNow();
-            _instrument.Mark("off	note=" + note + "	voices=" + voices);
-            _instrument.NoteOff(note);
+            if (_instrumentOk) _instrument.NoteOff(note);
         }
 
         /// <summary>
@@ -2313,14 +2110,6 @@ namespace AkaiS950Studio
                 if (EnsureInstrument())
                 {
                     _instrument.SetProgram(f.Disk, f.Entry);
-
-                    string expect = _instrument.WouldPlay(note, 100);
-
-                    // Into the margin of the recording too, so the audio can be cut
-                    // up afterwards and each piece held against what it should be.
-                    _instrument.Mark("on	note=" + note + "	kg=" + (group + 1) +
-                                     "	names=" + sample.Name.Trim() + "	expect=" + expect);
-
                     _instrument.NoteOn(note, 100);
 
                     // What it is SOUNDING, not what the keygroup under the pointer says.

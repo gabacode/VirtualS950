@@ -40,17 +40,6 @@ namespace AkaiS950Studio
         /// </summary>
         public bool SnapLoopsToZero = false;
 
-        /// <summary>
-        /// Play every keygroup with the filter wide open and not tracking the key.
-        ///
-        /// For answering one question: are two keygroups playing different samples, or
-        /// the same sample through a different filter? Key tracking makes one sample
-        /// sound like several, which is what it is for, and which is also exactly what
-        /// makes the question hard to settle by ear. With this set, anything still
-        /// different is different in the sample.
-        /// </summary>
-        public bool DefeatFilter = false;
-
         public bool Running { get; private set; }
         public string Error { get; private set; }
         public double LatencyMs { get { return _out.LatencyMs; } }
@@ -96,76 +85,7 @@ namespace AkaiS950Studio
 
         Patch _patch;
 
-        void Fill(float[] mono, int frames)
-        {
-            Live.Render(mono, 0, frames);
-
-            // The tap, after the mix and before the card. Null almost always, and a
-            // copy into a ring when it is not, so the cost of the feature when it is
-            // off is one null test per buffer.
-            Recorder r = _recorder;
-            if (r != null) r.Write(mono, 0, frames);
-        }
-
-        // ----------------------------------------------------------------- recording
-
-        volatile Recorder _recorder;
-        readonly List<string> _marks = new List<string>();
-
-        public bool Recording { get { return _recorder != null; } }
-
-        /// <summary>Seconds captured so far, or zero when not recording.</summary>
-        public double RecordedSeconds
-        {
-            get { Recorder r = _recorder; return r == null ? 0 : r.Seconds; }
-        }
-
-        /// <summary>
-        /// Start capturing what is played to a WAV beside a text file of marks.
-        ///
-        /// The marks are what makes a recording analysable rather than merely audible:
-        /// each one is a position in seconds and what was asked for at that moment, so a
-        /// stretch of the waveform can be held against the sample it was supposed to be.
-        /// </summary>
-        public bool StartRecording(string path)
-        {
-            if (_recorder != null) return false;
-            if (!Running && !Start()) return false;
-
-            _marks.Clear();
-            try { _recorder = new Recorder(path, SampleRate, 1.0); }
-            catch (Exception ex) { Error = ex.Message; return false; }
-            return true;
-        }
-
-        /// <summary>Note in the margin of the recording, at wherever it has got to.</summary>
-        public void Mark(string what)
-        {
-            Recorder r = _recorder;
-            if (r == null) return;
-            lock (_marks) _marks.Add(r.Seconds.ToString("F4") + "	" + what);
-        }
-
-        /// <summary>Close the file. Returns its path, or null if nothing was recording.</summary>
-        public string StopRecording()
-        {
-            Recorder r = _recorder;
-            if (r == null) return null;
-            _recorder = null;
-
-            string path = r.Stop();
-            if (r.Overran) Error = "The recording dropped samples - the disk could not keep up.";
-
-            try
-            {
-                lock (_marks)
-                    System.IO.File.WriteAllLines(
-                        System.IO.Path.ChangeExtension(path, ".marks.txt"), _marks.ToArray());
-            }
-            catch { /* the audio is the part that matters */ }
-
-            return path;
-        }
+        void Fill(float[] mono, int frames) { Live.Render(mono, 0, frames); }
 
         // ------------------------------------------------------------------- playing
 
@@ -177,52 +97,6 @@ namespace AkaiS950Studio
         /// Read after the note has been rendered, so it is one buffer behind - which for
         /// a status line is close enough, and it is the truth rather than an intention.
         /// </summary>
-        /// <summary>
-        /// What the loaded patch says this note and velocity WOULD sound, asked now.
-        ///
-        /// LastPlayed reports what the audio thread did, so it is one buffer behind. This
-        /// asks the same question of the patch synchronously, which is what a diagnostic
-        /// wants: it can be set beside what the editor thinks it is playing, at the moment
-        /// of the click, with nothing to wait for.
-        /// </summary>
-        public string WouldPlay(int note, int velocity)
-        {
-            Patch p = _patch;
-            if (p == null) return "(no programme loaded)";
-
-            var hit = new List<KeygroupPatch>();
-            p.Matching(note, velocity, hit);
-            if (hit.Count == 0) return "(nothing)";
-
-            var names = new List<string>();
-            for (int i = 0; i < hit.Count; i++)
-                names.Add(hit[i].Sound.Name + " [kg " + (hit[i].KeygroupIndex + 1) + "]");
-            return string.Join(" + ", names.ToArray());
-        }
-
-        /// <summary>
-        /// What every sounding voice is reading, right now.
-        ///
-        /// The end of the chain. WouldPlay says what the patch intends and LastPlayed says
-        /// what the note-on picked; this says what the voices are actually pulling audio
-        /// from, which is the only one of the three that cannot be argued with.
-        /// </summary>
-        public string SoundingNow()
-        {
-            Engine e = Live;
-            var parts = new List<string>();
-
-            for (int i = 0; i < e.VoiceCount; i++)
-            {
-                Voice v = e.VoiceAt(i);
-                if (v == null || !v.Active) continue;
-                Sound s = v.Playing;
-                parts.Add("note " + v.Note + "=" + (s == null ? "(null)" : s.Name) +
-                          "/" + (s == null ? 0 : s.Audio.Length) + "w");
-            }
-            return parts.Count == 0 ? "(silent)" : string.Join("  ", parts.ToArray());
-        }
-
         public string LastPlayed()
         {
             Engine e = Live;
@@ -350,21 +224,20 @@ namespace AkaiS950Studio
                 VcaAttack = kg.VcaAttack, VcaDecay = kg.VcaDecay,
                 VcaSustain = kg.VcaSustain, VcaRelease = kg.VcaRelease,
 
-                VcfWritten = !DefeatFilter &&
-                             KeygroupPatch.LooksWritten(kg.VcfAttack, kg.VcfDecay,
+                VcfWritten = KeygroupPatch.LooksWritten(kg.VcfAttack, kg.VcfDecay,
                                                         kg.VcfSustain, kg.VcfRelease),
                 VcfAttack = kg.VcfAttack, VcfDecay = kg.VcfDecay,
                 VcfSustain = kg.VcfSustain, VcfRelease = kg.VcfRelease,
                 VcfAmount = kg.VcfAmount,
 
-                VelToFilter = DefeatFilter ? 0 : kg.VelToFilter,
-                KeyToFilter = DefeatFilter ? 0 : kg.KeyToFilter,
+                VelToFilter = kg.VelToFilter,
+                KeyToFilter = kg.KeyToFilter,
                 VelToLoudness = kg.VelToLoudness,
 
                 LfoDelay = kg.LfoDelay, LfoRate = kg.LfoRate, LfoDepth = kg.LfoDepth,
                 LfoModwheelDepth = kg.LfoModwheelDepth, LfoDesync = kg.LfoDesync,
 
-                ZoneFilter = DefeatFilter ? 99 : zone.Filter,
+                ZoneFilter = zone.Filter,
                 ZoneLoudness = zone.Loudness,
                 ZoneTranspose = zone.PitchOffset,
 
@@ -497,7 +370,6 @@ namespace AkaiS950Studio
         public void Dispose()
         {
             if (_auditionTimer != null) { _auditionTimer.Dispose(); _auditionTimer = null; }
-            StopRecording();
             CloseMidi();
             _out.Dispose();
             Running = false;

@@ -25,10 +25,6 @@ namespace AkaiS950Engine
         public long StartedAt { get { return _startedAt; } }
         public bool Held { get { return _stage != Stage.Idle && _stage != Stage.Release; } }
 
-        /// <summary>The audio this voice is reading. For diagnostics - the render path
-        /// uses the field directly and never asks.</summary>
-        public Sound Playing { get { return _sound; } }
-
         enum Stage { Idle, Attack, Decay, Sustain, Release }
 
         readonly Butterworth _filter = new Butterworth();

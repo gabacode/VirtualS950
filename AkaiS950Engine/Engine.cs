@@ -97,12 +97,6 @@ namespace AkaiS950Engine
             return i >= 0 && i < _startedCount ? _started[i] : null;
         }
 
-        /// <summary>The voices as they are, for a caller that wants to look. Not for the
-        /// render path, which touches the array directly.</summary>
-        public Voice VoiceAt(int i) { return i >= 0 && i < _voices.Length ? _voices[i] : null; }
-
-        public int VoiceCount { get { return _voices.Length; } }
-
         public int ActiveVoices
         {
             get
