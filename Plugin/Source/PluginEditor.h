@@ -31,6 +31,17 @@ private:
 
     void openDisk();
 
+    /*
+     * Put the loaded disk's programmes in the box.
+     *
+     * Called when the editor is built as well as when a disk is opened, and that is the
+     * point of it being a method. A host destroys and recreates the editor every time the
+     * plugin's window is closed and reopened, while the processor - and the disk it is
+     * holding - carries on untouched. An editor that only filled this list when a disk was
+     * chosen came back empty, so changing programme meant opening the same disk again.
+     */
+    void refreshPrograms();
+
     juce::Slider gain { juce::Slider::RotaryHorizontalVerticalDrag,
                         juce::Slider::TextBoxBelow };
     juce::Label  gainLabel;

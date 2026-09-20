@@ -32,6 +32,9 @@ VirtualS950Editor::VirtualS950Editor (VirtualS950Processor& p)
     };
     addAndMakeVisible (programs);
 
+    // Whatever the processor is already holding - this editor may well not be the first.
+    refreshPrograms();
+
     // Big enough to hold the file browser, which opens inside this window rather than as a
     // dialog of its own - see openDisk.
     setSize (720, 500);
@@ -93,20 +96,34 @@ void VirtualS950Editor::openDisk()
             return;
         }
 
-        programs.clear (juce::dontSendNotification);
-
-        const auto names = processor.getProgramNames();
-        for (int i = 0; i < names.size(); ++i)
-            programs.addItem (names[i], i + 1);
-
-        programs.setSelectedId (processor.getSelectedProgram() + 1,
-                                juce::dontSendNotification);
+        refreshPrograms();
     });
 }
 
 VirtualS950Editor::~VirtualS950Editor()
 {
     stopTimer();
+}
+
+void VirtualS950Editor::refreshPrograms()
+{
+    /*
+     * dontSendNotification throughout: filling the box must not look like someone choosing
+     * from it. Without that, rebuilding the list would call selectProgram and rebuild the
+     * patch - and putting the selection back would do it a second time, under whatever is
+     * currently sounding.
+     */
+    programs.clear (juce::dontSendNotification);
+
+    const auto names = processor.getProgramNames();
+
+    for (int i = 0; i < names.size(); ++i)
+        programs.addItem (names[i], i + 1);
+
+    const int chosen = processor.getSelectedProgram();
+
+    if (chosen >= 0 && chosen < names.size())
+        programs.setSelectedId (chosen + 1, juce::dontSendNotification);
 }
 
 void VirtualS950Editor::timerCallback()

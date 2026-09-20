@@ -51,8 +51,9 @@ juce_add_plugin(VirtualS950
     IS_MIDI_EFFECT              FALSE
     EDITOR_WANTS_KEYBOARD_FOCUS FALSE
 
-    # Straight into the folder the host scans, so a build is testable without copying.
-    COPY_PLUGIN_AFTER_BUILD     TRUE
+    # Installed by install_vst3.cmake below rather than by JUCE, so that a host holding the
+    # old binary open is a sentence rather than a failed build. See that file.
+    COPY_PLUGIN_AFTER_BUILD     FALSE
 
     # Standalone as well as VST3: it opens without a DAW, which makes "is the plugin
     # broken or is the host unhappy with it" answerable in one step rather than two.
@@ -67,6 +68,17 @@ target_sources(VirtualS950 PRIVATE
     Source/S950/Hfe.cpp)
 
 target_include_directories(VirtualS950 PRIVATE Source)
+
+#
+# Install the built bundle where a host will find it, without the build failing when the
+# host has the old one open. install_vst3.cmake explains why that is worth the detour.
+#
+add_custom_command(TARGET VirtualS950_VST3 POST_BUILD
+    COMMAND "${CMAKE_COMMAND}"
+            "-DSRC=${CMAKE_CURRENT_BINARY_DIR}/VirtualS950_artefacts/$<CONFIG>/VST3/VirtualS950.vst3"
+            "-DDST=${VST3_DESTINATION}"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/install_vst3.cmake"
+    VERBATIM)
 
 target_compile_definitions(VirtualS950 PUBLIC
     JUCE_WEB_BROWSER=0
