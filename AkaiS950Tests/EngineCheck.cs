@@ -75,6 +75,7 @@ static class EngineCheck
         FilterCheck();
         EnvelopeCheck();
         LfoCheck();
+        HoldCheck();
         PolyphonyCheck();
 
         Console.WriteLine();
@@ -395,6 +396,59 @@ static class EngineCheck
             im -= a[i] * Math.Sin(ang);
         }
         return Math.Sqrt(re * re + im * im) * 2 / n;
+    }
+
+    // --------------------------------------------------------------- holding a note
+
+    /// <summary>
+    /// A looped note sustains while it is held and stops when it is not.
+    ///
+    /// The first half of that is what a loop is for. The second half is the part that
+    /// went wrong: the engine released correctly all along, but nothing in the editor ever
+    /// called NoteOff - the piano keyboard raised a click and no matching release - so
+    /// every looped sample played until the program closed, and after eight of them every
+    /// voice was held and the next key stole one.
+    /// </summary>
+    static void HoldCheck()
+    {
+        var p2 = new Patch();
+        var kg = Flat(Tone(400, 2));
+        kg.VcaRelease = 20;                      // about a tenth of a second
+        p2.Keygroups.Add(kg);
+
+        var eng = new Engine(Rate);
+        eng.Gain = 1f;
+        eng.SetPatch(p2);
+        eng.NoteOn(60, 100);
+
+        var buf = new float[(int)(Rate * 0.25)];
+
+        // held, and well past the end of the sample itself
+        for (int i = 0; i < 24; i++) eng.Render(buf, 0, buf.Length);
+        double heldRms = Rms(buf, 0, buf.Length);
+        Check("a looped note is still sounding six seconds in", heldRms > 0.05,
+              "rms " + F(heldRms, 3) + ", " + eng.ActiveVoices + " voice");
+
+        // let go
+        eng.NoteOff(60);
+        for (int i = 0; i < 8; i++) eng.Render(buf, 0, buf.Length);
+
+        double afterRms = Rms(buf, 0, buf.Length);
+        Check("  and stops when the key is let go", afterRms < 0.002,
+              "rms " + F(afterRms, 6));
+        Check("  giving its voice back", eng.ActiveVoices == 0,
+              eng.ActiveVoices + " still active");
+
+        // and the voices must not leak: press and release the same key many times
+        for (int i = 0; i < 40; i++)
+        {
+            eng.NoteOn(60, 100);
+            eng.Render(buf, 0, buf.Length);
+            eng.NoteOff(60);
+            for (int j = 0; j < 4; j++) eng.Render(buf, 0, buf.Length);
+        }
+        Check("  and forty presses leave nothing behind", eng.ActiveVoices == 0,
+              eng.ActiveVoices + " still active");
     }
 
     // ------------------------------------------------------------------ polyphony

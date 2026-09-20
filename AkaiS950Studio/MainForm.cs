@@ -300,6 +300,7 @@ namespace AkaiS950Studio
             _piano.Dock = DockStyle.Top;
             _piano.Height = 92;
             _piano.KeyClicked += OnPianoKey;
+            _piano.KeyReleased += OnPianoKeyUp;
 
             // The list names the column it is in, level with the editor beside it.
             // Docking resolves from the last-added control backwards, so the header goes
@@ -2037,6 +2038,12 @@ namespace AkaiS950Studio
                 s = FindSample(f.Disk, kg.Zone2.Name);
             }
             return s;
+        }
+
+        /// <summary>Letting go of a key stops the note it started.</summary>
+        void OnPianoKeyUp(int note)
+        {
+            if (_instrumentOk) _instrument.NoteOff(note);
         }
 
         /// <summary>

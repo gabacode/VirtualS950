@@ -58,6 +58,20 @@ namespace AkaiS950Studio
         /// <summary>Raised with the keygroup that owns the key, and the key's MIDI note.</summary>
         public event Action<int, int> KeyClicked;
 
+        /// <summary>
+        /// The key was let go, so the note it started should stop.
+        ///
+        /// A click used to be one-way - KeyClicked and nothing else - which was fine when
+        /// playing a note meant firing a whole sample at SoundPlayer and waiting. With a
+        /// real engine behind it, a note that is never released is a note that never ends:
+        /// a looped sample rings forever, and after eight of them every voice is held and
+        /// the next key steals one.
+        /// </summary>
+        public event Action<int> KeyReleased;
+
+        // the note the mouse is currently holding down, or -1
+        int _sounding = -1;
+
         /// <summary>Raised once both ends of a range have been clicked, low first.</summary>
         public event Action<int, int> RangePicked;
 
@@ -445,8 +459,49 @@ namespace AkaiS950Studio
             int grp = GroupAt(note);
             if (grp < 0) return;
 
+            _sounding = note;
+            Capture = true;            // so the release arrives even off the control
+
             var h = KeyClicked;
             if (h != null) h(grp, note);
+        }
+
+        protected override void OnMouseUp(MouseEventArgs e)
+        {
+            base.OnMouseUp(e);
+            if (e.Button == MouseButtons.Left) StopSounding();
+        }
+
+        /// <summary>
+        /// Let go of whatever is sounding.
+        ///
+        /// Called from more than one place on purpose. A mouse-up is the ordinary way, but
+        /// a drag off the window, another window taking the mouse, or the control being
+        /// hidden mid-press all end the press too - and any of them leaving a note held
+        /// would be a note held until the program closed.
+        /// </summary>
+        void StopSounding()
+        {
+            if (_sounding < 0) return;
+
+            int note = _sounding;
+            _sounding = -1;
+            Capture = false;
+
+            var r = KeyReleased;
+            if (r != null) r(note);
+        }
+
+        protected override void OnMouseCaptureChanged(EventArgs e)
+        {
+            base.OnMouseCaptureChanged(e);
+            if (!Capture) StopSounding();
+        }
+
+        protected override void OnVisibleChanged(EventArgs e)
+        {
+            base.OnVisibleChanged(e);
+            if (!Visible) StopSounding();
         }
     }
 }

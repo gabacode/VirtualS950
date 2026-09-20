@@ -281,10 +281,50 @@ namespace AkaiS950Studio
             Live.SetPatch(patch);
             Live.AllNotesOff();
             Live.NoteOn(note, 100);
+
+            /*
+             * Nothing will ever let go of this one.
+             *
+             * A keygroup gets its note-off from the key being released; auditioning a
+             * sample has no key, so a looped sample would sound until the program closed.
+             * A one-shot ends by itself and needs none of this, but a loop is exactly what
+             * loops are for.
+             *
+             * The whole sample, or ten seconds, whichever is shorter - long enough to hear
+             * what the loop does, short enough not to become furniture. Stop() ends it
+             * sooner, and so does playing anything else.
+             */
+            if (sound.Loops)
+            {
+                double seconds = Math.Min(10.0, Math.Max(2.0, sound.Audio.Length /
+                                          (double)Math.Max(1, sound.SourceRate) * 3));
+                StopAfter(note, seconds);
+            }
+        }
+
+        System.Threading.Timer _auditionTimer;
+
+        /// <summary>Release a note after a while, for a preview nobody will release.</summary>
+        void StopAfter(int note, double seconds)
+        {
+            if (_auditionTimer != null) { _auditionTimer.Dispose(); _auditionTimer = null; }
+
+            _auditionTimer = new System.Threading.Timer(delegate
+            {
+                Live.NoteOff(note);
+            }, null, (int)(seconds * 1000), System.Threading.Timeout.Infinite);
+        }
+
+        /// <summary>Everything off, now.</summary>
+        public void Stop()
+        {
+            if (_auditionTimer != null) { _auditionTimer.Dispose(); _auditionTimer = null; }
+            Live.AllNotesOff();
         }
 
         public void Dispose()
         {
+            if (_auditionTimer != null) { _auditionTimer.Dispose(); _auditionTimer = null; }
             CloseMidi();
             _out.Dispose();
             Running = false;
