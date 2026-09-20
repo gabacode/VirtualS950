@@ -153,7 +153,7 @@ namespace AkaiS950Engine
             _startedNote = note;
             if (p == null) return;
 
-            p.Matching(note, _matched);
+            p.Matching(note, velocity, _matched);
 
             for (int m = 0; m < _matched.Count; m++)
             {

@@ -76,6 +76,7 @@ static class EngineCheck
         EnvelopeCheck();
         LfoCheck();
         HoldCheck();
+        VelocityZoneCheck();
         PolyphonyCheck();
 
         Console.WriteLine();
@@ -449,6 +450,59 @@ static class EngineCheck
         }
         Check("  and forty presses leave nothing behind", eng.ActiveVoices == 0,
               eng.ActiveVoices + " still active");
+    }
+
+    // ------------------------------------------------------------ velocity zones
+
+    /// <summary>
+    /// The two zones of a keygroup are alternatives, never both.
+    ///
+    /// Sounding both was the bug behind "a bell-like tone over every note": 74 of the
+    /// library's 168 two-zone keygroups name the SAME sample in both, so playing them
+    /// together laid two copies of one sample over each other, and 121 of the 168 set the
+    /// switch to 128 - which is the panel saying there is no second zone at all, since no
+    /// velocity can reach it.
+    /// </summary>
+    static void VelocityZoneCheck()
+    {
+        Sound soft = Tone(400, 1), hard = Tone(300, 1);
+
+        var p2 = new Patch();
+        var a2 = Flat(soft); a2.VelocityFrom = 0; a2.VelocityTo = 61;
+        var b2 = Flat(hard); b2.VelocityFrom = 62; b2.VelocityTo = 127;
+        p2.Keygroups.Add(a2);
+        p2.Keygroups.Add(b2);
+
+        var into = new System.Collections.Generic.List<KeygroupPatch>();
+
+        p2.Matching(60, 50, into);
+        Check("a soft strike takes the lower zone only",
+              into.Count == 1 && into[0].Sound == soft, into.Count + " zone(s)");
+
+        p2.Matching(60, 100, into);
+        Check("  a hard one takes the upper zone only",
+              into.Count == 1 && into[0].Sound == hard, into.Count + " zone(s)");
+
+        p2.Matching(60, 61, into);
+        Check("  and the switch itself is the boundary",
+              into.Count == 1 && into[0].Sound == soft, into.Count + " zone(s)");
+
+        // a switch of 128 means there is no second zone: zone 1 answers everything
+        var p3 = new Patch();
+        var only = Flat(soft); only.VelocityFrom = 0; only.VelocityTo = 127;
+        p3.Keygroups.Add(only);
+        p3.Matching(60, 127, into);
+        Check("  a switch of 128 leaves zone 1 the whole range", into.Count == 1,
+              into.Count + " zone(s) at velocity 127");
+
+        // and it really is one VOICE, not one match
+        var eng = new Engine(Rate);
+        eng.SetPatch(p2);
+        var buf = new float[512];
+        eng.NoteOn(60, 100);
+        eng.Render(buf, 0, buf.Length);
+        Check("  so one key makes one voice, not two", eng.ActiveVoices == 1,
+              eng.ActiveVoices + " voices");
     }
 
     // ------------------------------------------------------------------ polyphony

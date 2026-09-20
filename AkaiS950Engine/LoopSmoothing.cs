@@ -17,17 +17,23 @@ namespace AkaiS950Engine
     /// zero, and it is worth turning off when the question is "what did the hardware sound
     /// like" rather than "what do I want to play".
     ///
-    /// TWO FIXES, AND THEY ARE NOT THE SAME
+    /// WHY SNAPPING TO ZERO CROSSINGS IS OFF
     ///
-    /// Snapping the ends to zero crossings removes the STEP: both sides are at zero, so
-    /// there is nothing to jump. It does not remove the CORNER - the waveform can cross zero
-    /// going up at one end and down at the other, and a sudden change of slope is still
-    /// audible, as a duller click rather than a sharp one. Matching the direction of the
-    /// crossing fixes that, when a matching one is near enough to use.
+    /// It seems the obvious first move: put both ends on a zero crossing and there is no
+    /// step left to hear. It was tried, and across the library it moved the loop points on
+    /// 272 of the 324 looped samples and by more than a fiftieth of the loop on 72 of them -
+    /// BASS 2G1, whose loop is 688 frames, had its ends moved 82 and 84.
     ///
-    /// A crossfade removes both, by making the two sides actually equal across a short
-    /// stretch instead of hoping they already are. It is the one that always works, at the
-    /// cost of a few milliseconds of the loop being a blend of two places in the sample.
+    /// Moving the two ends by different amounts changes the loop LENGTH, and for a pitched
+    /// sample the loop length is what sets the pitch of the looped part. A loop holding a
+    /// whole number of cycles stops holding one, so it steps at every wrap - at the loop's
+    /// own rate, which is squarely in the audible range. It replaces a click with a tone,
+    /// and a tone that is not related to the note is heard as a bell ringing over it.
+    ///
+    /// A crossfade has none of that cost. It moves nothing: it makes the two sides of the
+    /// join actually equal across a few milliseconds instead of hoping they already are.
+    /// So that is what is on, and the snapping is kept only because it is occasionally
+    /// useful on unpitched material where the loop length means nothing.
     /// </summary>
     public static class LoopSmoothing
     {
@@ -149,9 +155,18 @@ namespace AkaiS950Engine
             float[] a = s.Audio;
 
             int n = (int)(s.SourceRate * ms / 1000.0);
-            // never longer than the run-up available, nor than half the loop itself
+
+            /*
+             * Never longer than the run-up there is to fade towards, nor than a quarter of
+             * the loop.
+             *
+             * The library's shortest loop is 45 frames - a millisecond - and a four
+             * millisecond fade across that would be the whole loop replaced by a blend of
+             * somewhere else. A quarter is the most that can be spent without the loop
+             * becoming something other than what it was.
+             */
             n = Math.Min(n, s.LoopFrom);
-            n = Math.Min(n, (s.LoopTo - s.LoopFrom) / 2);
+            n = Math.Min(n, (s.LoopTo - s.LoopFrom) / 4);
             if (n < 4) return;
 
             var copy = new float[a.Length];

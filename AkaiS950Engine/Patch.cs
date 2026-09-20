@@ -39,6 +39,23 @@ namespace AkaiS950Engine
     public sealed class KeygroupPatch
     {
         public int LowKey, HighKey;
+
+        /*
+         * Which velocities this entry answers to.
+         *
+         * A keygroup holds up to two VELOCITY zones - alternatives, not layers. The
+         * switch in byte 2 is the boundary: softer than it plays zone 1, at it or harder
+         * plays zone 2, and a switch of 128 is how the panel says "no second zone",
+         * since no velocity can reach it.
+         *
+         * Sounding both was this engine's worst bug. 74 of the library's 168 two-zone
+         * keygroups name the SAME sample in both, so playing them together put two
+         * copies of one sample on top of each other - and 121 of the 168 set the switch
+         * to 128, so their second zone should never have sounded at all. Together they
+         * rang like a bell over every note.
+         */
+        public int VelocityFrom, VelocityTo = 127;
+
         public Sound Sound;
 
         public int VcaAttack, VcaDecay, VcaSustain = 99, VcaRelease;
@@ -77,21 +94,25 @@ namespace AkaiS950Engine
         public readonly List<KeygroupPatch> Keygroups = new List<KeygroupPatch>();
 
         /// <summary>
-        /// Every keygroup whose range covers this note.
+        /// Every entry this note and velocity should sound.
         ///
-        /// Plural on purpose. Overlapping keygroups are how a program layers two samples on
-        /// one key, and the machine sounds all of them - 1908 keygroups across the library
-        /// and plenty of them overlap.
+        /// Plural on purpose, but for one reason only: overlapping KEYGROUPS do layer, and
+        /// the machine sounds all of them. The two zones INSIDE a keygroup do not - they
+        /// are velocity alternatives, and only one of them answers any given strike.
         /// </summary>
-        public void Matching(int note, List<KeygroupPatch> into)
+        public void Matching(int note, int velocity, List<KeygroupPatch> into)
         {
             into.Clear();
             for (int i = 0; i < Keygroups.Count; i++)
             {
                 KeygroupPatch k = Keygroups[i];
                 if (k.Sound == null || k.Sound.Audio == null || k.Sound.Audio.Length == 0) continue;
+
                 int lo = Math.Min(k.LowKey, k.HighKey), hi = Math.Max(k.LowKey, k.HighKey);
-                if (note >= lo && note <= hi) into.Add(k);
+                if (note < lo || note > hi) continue;
+                if (velocity < k.VelocityFrom || velocity > k.VelocityTo) continue;
+
+                into.Add(k);
             }
         }
     }

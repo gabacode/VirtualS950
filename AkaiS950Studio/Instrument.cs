@@ -28,11 +28,17 @@ namespace AkaiS950Studio
         readonly Dictionary<AkaiEntry, Sound> _sounds = new Dictionary<AkaiEntry, Sound>();
 
         /// <summary>
-        /// How much of the loop join to crossfade, in milliseconds, and whether to pull the
-        /// ends onto zero crossings first. Zero and false is what the S950 itself does.
+        /// How much of the loop join to crossfade, in milliseconds. Zero is what the S950
+        /// itself does - it splices, and clicks when the points are bad.
         /// </summary>
         public double LoopCrossfadeMs = LoopSmoothing.DefaultCrossfadeMs;
-        public bool SnapLoopsToZero = true;
+
+        /// <summary>
+        /// Pull the loop ends onto zero crossings as well. OFF, and see LoopSmoothing for
+        /// why: it changes the loop length, and the loop length is the pitch of the looped
+        /// part, so it trades a click for a tone that does not belong to the note.
+        /// </summary>
+        public bool SnapLoopsToZero = false;
 
         public bool Running { get; private set; }
         public string Error { get; private set; }
@@ -171,17 +177,33 @@ namespace AkaiS950Studio
             {
                 AkaiDisk.Keygroup kg = groups[i];
 
-                // Both zones sound, which is how a programme layers two samples on one key.
-                AddZone(disk, patch, kg, kg.Zone1);
-                if (kg.HasSecondZone) AddZone(disk, patch, kg, kg.Zone2);
+                /*
+                 * The two zones are velocity alternatives, so they split the range at the
+                 * switch rather than both sounding. A switch of 128 leaves zone 1 the
+                 * whole range, which is how the panel turns the second zone off.
+                 */
+                int split = kg.VelocitySwitch;
+                if (split < 1 || split > 128) split = 128;
+
+                if (!kg.HasSecondZone)
+                {
+                    AddZone(disk, patch, kg, kg.Zone1, 0, 127);
+                }
+                else
+                {
+                    AddZone(disk, patch, kg, kg.Zone1, 0, Math.Min(127, split - 1));
+                    if (split <= 127) AddZone(disk, patch, kg, kg.Zone2, split, 127);
+                }
             }
 
             _patch = patch;
             Live.SetPatch(patch);
         }
 
-        void AddZone(AkaiDisk disk, Patch patch, AkaiDisk.Keygroup kg, AkaiDisk.Zone zone)
+        void AddZone(AkaiDisk disk, Patch patch, AkaiDisk.Keygroup kg, AkaiDisk.Zone zone,
+                     int velFrom, int velTo)
         {
+            if (velTo < velFrom) return;
             if (zone == null || string.IsNullOrEmpty(zone.Name)) return;
 
             AkaiEntry sample = FindSample(disk, zone.Name);
@@ -194,6 +216,8 @@ namespace AkaiS950Studio
             {
                 LowKey = kg.LowKey,
                 HighKey = kg.HighKey,
+                VelocityFrom = velFrom,
+                VelocityTo = velTo,
                 Sound = sound,
 
                 VcaAttack = kg.VcaAttack, VcaDecay = kg.VcaDecay,
@@ -292,7 +316,7 @@ namespace AkaiS950Studio
             var patch = new Patch { Name = sound.Name };
             patch.Keygroups.Add(new KeygroupPatch
             {
-                LowKey = 0, HighKey = 127, Sound = sound,
+                LowKey = 0, HighKey = 127, VelocityFrom = 0, VelocityTo = 127, Sound = sound,
                 VcaAttack = 0, VcaDecay = 0, VcaSustain = 99, VcaRelease = 0,
                 VcfWritten = true, VcfSustain = 99, ZoneFilter = 99,
                 LfoDesync = true
