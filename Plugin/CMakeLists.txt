@@ -63,7 +63,8 @@ target_sources(VirtualS950 PRIVATE
     Source/PluginEditor.cpp
     Source/S950/Voice.cpp
     Source/S950/Engine.cpp
-    Source/S950/Disk.cpp)
+    Source/S950/Disk.cpp
+    Source/S950/Hfe.cpp)
 
 target_include_directories(VirtualS950 PRIVATE Source)
 

@@ -65,6 +65,11 @@ static class DiskDump
     {
         var s = new StringBuilder();
 
+        // How the recovery went, which for an .hfe is part of what is being checked: the
+        // two decoders have to agree about which sectors were bad, not just the good ones.
+        s.Append("recovery badcrc ").Append(d.BadCrcSectors)
+         .Append(" missing ").Append(d.MissingSectors).Append('\n');
+
         s.Append("entries ").Append(d.Entries.Count).Append('\n');
 
         foreach (AkaiEntry e in d.Entries)

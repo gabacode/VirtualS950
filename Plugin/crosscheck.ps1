@@ -14,9 +14,10 @@
     So the reference is made at the moment of checking and thrown away. Both readers dump
     the same image to the same format, and the two are diffed. Nothing is kept.
 
-    The conversion to raw sectors happens here too, with the C#: the C++ reads only raw
-    images so far, and dumping the converted file rather than the original is what makes the
-    two comparable - while exercising the conversion into the bargain.
+    Both readers take the original file, .hfe or .img alike. For an .hfe that means the two
+    MFM decoders are compared as well - and the dump carries the bad-sector and
+    missing-sector counts, so they have to agree about what could NOT be read too, which is
+    the half of a thirty-year-old floppy that is easy to get quietly wrong.
 #>
 param(
     [Parameter(Mandatory = $true)][string]$Image,
@@ -55,7 +56,7 @@ if (-not $vsPath) { Write-Error "No Visual Studio C++ tools found." }
 $vcvars = Join-Path $vsPath "VC\Auxiliary\Build\vcvars64.bat"
 $include = Join-Path $root "Source\S950"
 
-cmd /c "call `"$vcvars`" >nul 2>&1 && cd /d `"$work`" && cl /nologo /std:c++17 /EHsc /W4 /I `"$include`" `"$root\Tests\DiskDump.cpp`" `"$include\Disk.cpp`" /Fe:`"$cppDump`"" | Out-Null
+cmd /c "call `"$vcvars`" >nul 2>&1 && cd /d `"$work`" && cl /nologo /std:c++17 /EHsc /W4 /I `"$include`" `"$root\Tests\DiskDump.cpp`" `"$include\Disk.cpp`" `"$include\Hfe.cpp`" /Fe:`"$cppDump`"" | Out-Null
 if ($LASTEXITCODE -ne 0) { Write-Error "the C++ dumper did not build" }
 
 # ------------------------------------------------------------------- the images
@@ -79,18 +80,16 @@ $differ = @()
 
 foreach ($img in $images) {
     $name = [System.IO.Path]::GetFileNameWithoutExtension($img)
-    $raw  = Join-Path $work "$name.img"
     $a    = Join-Path $work "$name.cs.txt"
     $b    = Join-Path $work "$name.cpp.txt"
 
-    # The C# converts to raw sectors and dumps what it converted.
-    & $csDump $img --save-img $raw > $a 2>$null
+    & $csDump $img > $a 2>$null
     if ($LASTEXITCODE -ne 0) {
         Write-Host ("  {0,-34} the C# reader would not open it" -f $name) -ForegroundColor DarkYellow
         continue
     }
 
-    & $cppDump $raw > $b 2>$null
+    & $cppDump $img > $b 2>$null
     if ($LASTEXITCODE -ne 0) {
         Write-Host ("  {0,-34} the C++ reader would not open it" -f $name) -ForegroundColor Red
         $differ += $name

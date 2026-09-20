@@ -253,6 +253,16 @@ juce::String VirtualS950Processor::getDiskName() const
     return disk != nullptr ? juce::String (disk->getName()) : juce::String();
 }
 
+int VirtualS950Processor::getBadSectors() const
+{
+    return disk != nullptr ? disk->getBadCrcSectors() : 0;
+}
+
+int VirtualS950Processor::getMissingSectors() const
+{
+    return disk != nullptr ? disk->getMissingSectors() : 0;
+}
+
 void VirtualS950Processor::selectProgram (int index)
 {
     if (disk == nullptr || index < 0 || index >= programNames.size())

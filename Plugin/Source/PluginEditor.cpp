@@ -56,9 +56,7 @@ VirtualS950Editor::VirtualS950Editor (VirtualS950Processor& p)
  * that is always on top, and it cannot take focus away from the host. The cost is that it
  * looks like JUCE rather than like Windows, which for a plugin is the right way round.
  *
- * Raw sector images only so far. The library this was written against is .hfe, the same
- * 800K wrapped in a bit-level encoding of what a floppy controller sees; the editor writes
- * raw images in the meantime.
+ * Either container: a plain sector image, or the .hfe that archived floppies come in.
  */
 void VirtualS950Editor::openDisk()
 {
@@ -71,7 +69,7 @@ void VirtualS950Editor::openDisk()
 
     chooser = std::make_unique<juce::FileChooser> ("Open an Akai S950 disk image",
                                                    start,
-                                                   "*.img",
+                                                   "*.hfe;*.img",
                                                    false,      // not the OS dialog - see above
                                                    false,
                                                    this);      // live in this window
@@ -117,9 +115,22 @@ void VirtualS950Editor::timerCallback()
 
     patchLabel.setText (processor.getPatchName(), juce::dontSendNotification);
 
-    // The S950 had eight, and so does this - see Engine::Polyphony.
-    voicesLabel.setText (juce::String (voices) + " of 8 voices",
-                         juce::dontSendNotification);
+    /*
+     * The S950 had eight voices, and so does this - see Engine::Polyphony.
+     *
+     * A disk recovered with bad or missing sectors says so beside them. An archived floppy
+     * is thirty years old and some of them do not read cleanly; finding that out from a
+     * label beats finding it out from a hole in a take.
+     */
+    juce::String state = juce::String (voices) + " of 8 voices";
+
+    const int bad     = processor.getBadSectors();
+    const int missing = processor.getMissingSectors();
+
+    if (bad > 0 || missing > 0)
+        state << "   -   recovered with " << bad << " bad and " << missing << " missing sectors";
+
+    voicesLabel.setText (state, juce::dontSendNotification);
 }
 
 void VirtualS950Editor::paint (juce::Graphics& g)
@@ -130,6 +141,20 @@ void VirtualS950Editor::paint (juce::Graphics& g)
     g.setFont (juce::FontOptions (22.0f));
     g.drawText ("VirtualS950", 16, 12, getWidth() - 32, 28,
                 juce::Justification::centredLeft, true);
+
+    /*
+     * When this copy was compiled.
+     *
+     * A host holds a plugin's binary open for as long as a set using it is loaded, so a
+     * rebuild can quietly fail to install and the window looks identical either way. That
+     * has now cost three rounds of "it still does not work" on a build that was never the
+     * one running. The C# editor carries the same stamp for the same reason.
+     */
+    g.setColour (juce::Colours::darkgrey);
+    g.setFont (juce::FontOptions (11.0f));
+    g.drawText (juce::String (__DATE__) + "  " + __TIME__,
+                16, 18, getWidth() - 32, 18,
+                juce::Justification::centredRight, true);
 
     g.setColour (juce::Colours::grey);
     g.setFont (juce::FontOptions (13.0f));

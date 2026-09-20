@@ -67,6 +67,11 @@ int main (int argc, char** argv)
         return 1;
     }
 
+    // How the recovery went, which for an .hfe is part of what is being checked: the two
+    // decoders have to agree about which sectors were bad, not just about the good ones.
+    std::printf ("recovery badcrc %d missing %d\n",
+                 disk.getBadCrcSectors(), disk.getMissingSectors());
+
     const auto& entries = disk.getEntries();
     std::printf ("entries %d\n", static_cast<int> (entries.size()));
 

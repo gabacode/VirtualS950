@@ -1,4 +1,5 @@
 #include "Disk.h"
+#include "Hfe.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -25,24 +26,32 @@ namespace s950
 
     bool Disk::loadBytes (std::string name, std::vector<unsigned char> bytes, std::string& error)
     {
+        fromHfe        = false;
+        badCrcSectors  = 0;
+        missingSectors = 0;
+
         /*
-         * A raw sector image only, for now.
-         *
-         * The library on this machine is .hfe, which is the same 800K of sectors wrapped in
-         * a bit-level MFM encoding of the flux a floppy controller would see. Decoding that
-         * is a job of its own and it is the fiddliest part of AkaiS950List; doing the plain
-         * image first means real programmes can be played - and the rest of this file
-         * checked against the C# - before any of that is written.
+         * An .hfe is not a picture of the sectors - it is a recording of the flux a floppy
+         * controller would see reading them. Getting an image out of one means doing what
+         * the controller does, which is what Hfe.cpp is for.
          */
-        if (bytes.size() > 8 && std::equal (bytes.begin(), bytes.begin() + 8, "HXCPICFE"))
+        if (hfe::looksLikeHfe (bytes))
         {
-            error = "that is an HFE image; only raw sector images are supported so far";
-            return false;
+            auto recovered = hfe::extract (bytes, badCrcSectors, missingSectors);
+
+            if (recovered.empty())
+            {
+                error = "that HFE image could not be decoded";
+                return false;
+            }
+
+            fromHfe = true;
+            bytes   = std::move (recovered);
         }
 
         if (bytes.size() != 819200 && bytes.size() != 1638400)
         {
-            error = "not an 800K or 1600K raw image (" + std::to_string (bytes.size()) + " bytes)";
+            error = "not an 800K or 1600K image (" + std::to_string (bytes.size()) + " bytes)";
             return false;
         }
 

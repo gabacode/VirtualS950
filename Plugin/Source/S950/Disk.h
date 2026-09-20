@@ -121,6 +121,19 @@ namespace s950
         const std::string&        getName()    const { return source; }
         const std::vector<Entry>& getEntries() const { return entries; }
 
+        /// True if this came out of an .hfe rather than a plain sector image.
+        bool wasHfe() const { return fromHfe; }
+
+        /*
+         * How the recovery went, for an .hfe. Both zero for a plain image.
+         *
+         * Worth showing rather than hiding: an archived floppy is thirty years old, and a
+         * disk that reads with three bad sectors is a different thing from one that reads
+         * cleanly - especially if it is about to be played into a recording.
+         */
+        int getBadCrcSectors()  const { return badCrcSectors; }
+        int getMissingSectors() const { return missingSectors; }
+
         /// The entry of that name and type, or nullptr.
         const Entry* find (const std::string& name, char type) const;
 
@@ -169,5 +182,8 @@ namespace s950
         std::string                source;
         std::vector<unsigned char> image;
         std::vector<Entry>         entries;
+
+        bool fromHfe = false;
+        int  badCrcSectors = 0, missingSectors = 0;
     };
 }

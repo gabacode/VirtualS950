@@ -78,6 +78,10 @@ public:
     /// The disk that is open, or an empty string.
     juce::String getDiskName() const;
 
+    /// How the recovery went, for a disk read out of an .hfe. Zero for a plain image.
+    int getBadSectors() const;
+    int getMissingSectors() const;
+
 private:
     void timerCallback() override;
 
