@@ -27,3 +27,6 @@ inventory*.csv
 
 # CMake's build tree for the plugin, and JUCE's compiled artefacts inside it.
 Plugin/build/
+
+# The compiled installer. Built by Installer\build-installer.ps1 from the sources beside it.
+Installer/Output/
