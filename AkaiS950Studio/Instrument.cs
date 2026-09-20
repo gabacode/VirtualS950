@@ -43,6 +43,15 @@ namespace AkaiS950Studio
         /// <summary>The port MIDI is listening on, or -1.</summary>
         public int MidiPort { get; private set; }
 
+        /// <summary>
+        /// Which MIDI channel to answer: 0 for all of them, or 1 to 16.
+        ///
+        /// All of them by default, which is not what the panel of an S950 does - but
+        /// a filter that is on before anyone has chosen it is a keyboard that silently
+        /// does nothing, and there is no way to tell that apart from a dead port.
+        /// </summary>
+        public int MidiChannel = 0;
+
         /// <summary>The name of the port MIDI is listening on, or null.</summary>
         public string MidiPortName { get; private set; }
 
@@ -177,6 +186,9 @@ namespace AkaiS950Studio
         void OnMidi(int status, int d1, int d2)
         {
             int kind = status & 0xF0;
+
+            int channel = MidiChannel;
+            if (channel != 0 && (status & 0x0F) != channel - 1) return;
 
             if (kind == 0x90 && d2 > 0) Live.NoteOn(d1, d2);
             else if (kind == 0x80 || (kind == 0x90 && d2 == 0)) Live.NoteOff(d1);

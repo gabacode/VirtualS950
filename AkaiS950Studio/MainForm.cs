@@ -140,6 +140,7 @@ namespace AkaiS950Studio
 
             Controls.Add(body);
             Controls.Add(status);
+            Controls.Add(BuildToolbar());
             Controls.Add(menu);
             MainMenuStrip = menu;
 
@@ -1293,6 +1294,7 @@ namespace AkaiS950Studio
         void UpdateCommands()
         {
             _exportItem.Enabled = SelectedFile != null;
+            UpdateToolbar();
             _importItem.Enabled = TargetDisk != null;
 
             bool dirty = _editDisk != null && _editDisk.Modified;
@@ -2224,6 +2226,7 @@ namespace AkaiS950Studio
             if (port < 0)
             {
                 if (_instrumentOk) _instrument.CloseMidi();
+                ShowMidiPortOnToolbar();
                 SetStatus("MIDI input off.");
                 return;
             }
@@ -2244,6 +2247,7 @@ namespace AkaiS950Studio
             // Whatever is selected becomes what the keyboard plays, now rather than at
             // the first note.
             SyncInstrumentProgram();
+            ShowMidiPortOnToolbar();
 
             var f = SelectedFile;
             SetStatus("MIDI in: " + _instrument.MidiPortName + "  -  playing " +
