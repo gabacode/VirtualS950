@@ -56,6 +56,10 @@ namespace AkaiS950Engine
          */
         public int VelocityFrom, VelocityTo = 127;
 
+        /// <summary>Which keygroup this came from. Only the checks care, and they care a lot:
+        /// two entries from the SAME keygroup must never answer one strike.</summary>
+        public int KeygroupIndex = -1;
+
         public Sound Sound;
 
         public int VcaAttack, VcaDecay, VcaSustain = 99, VcaRelease;

@@ -216,6 +216,7 @@ namespace AkaiS950Studio
             {
                 LowKey = kg.LowKey,
                 HighKey = kg.HighKey,
+                KeygroupIndex = kg.Index,
                 VelocityFrom = velFrom,
                 VelocityTo = velTo,
                 Sound = sound,

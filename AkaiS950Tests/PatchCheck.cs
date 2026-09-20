@@ -41,6 +41,7 @@ static class PatchCheck
         }
 
         int disks = 0, programmes = 0, played = 0, silent = 0, bad = 0, keygroups = 0, loud = 0;
+        int doubled = 0;
         var complaints = new List<string>();
 
         foreach (string file in Directory.GetFiles(dir, "*.hfe"))
@@ -60,6 +61,36 @@ static class PatchCheck
 
                 var groups = disk.Keygroups(e);
                 keygroups += groups.Count;
+
+                /*
+                 * The invariant the "bell over every note" bug broke.
+                 *
+                 * A keygroup holds up to two VELOCITY zones, which are alternatives. Two
+                 * entries from the same keygroup answering one strike means both are
+                 * sounding, which laid two copies of one sample over each other on 74 of
+                 * the library's two-zone keygroups.
+                 */
+                Patch built = PatchOf(inst);
+                if (built != null)
+                {
+                    var hit = new List<KeygroupPatch>();
+                    for (int note = 0; note < 128 && doubled == 0; note += 3)
+                        for (int vel = 1; vel <= 127; vel += 9)
+                        {
+                            built.Matching(note, vel, hit);
+                            for (int x = 0; x < hit.Count; x++)
+                                for (int y = x + 1; y < hit.Count; y++)
+                                    if (hit[x].KeygroupIndex >= 0 &&
+                                        hit[x].KeygroupIndex == hit[y].KeygroupIndex)
+                                    {
+                                        doubled++;
+                                        if (complaints.Count < 8)
+                                            complaints.Add(Path.GetFileName(file) + " / " + e.Name.Trim() +
+                                                " kg " + (hit[x].KeygroupIndex + 1) +
+                                                ": both zones answer note " + note + " velocity " + vel);
+                                    }
+                        }
+                }
 
                 // one note per keygroup, in the middle of its range
                 foreach (AkaiDisk.Keygroup kg in groups)
@@ -99,7 +130,10 @@ static class PatchCheck
         foreach (string c in complaints) Console.WriteLine("    " + c);
 
         Console.WriteLine();
-        bool ok = bad == 0 && played > keygroups / 2;
+        Console.WriteLine("  " + doubled + " keygroups sounded both velocity zones at once" +
+                          (doubled == 0 ? " - which is as it should be" : ""));
+
+        bool ok = bad == 0 && doubled == 0 && played > keygroups / 2;
         Console.WriteLine(ok ? "all good"
                              : (bad > 0 ? bad + " FAILED" : "too few notes sounded - FAILED"));
         return ok ? 0 : 1;
