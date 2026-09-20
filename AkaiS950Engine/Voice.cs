@@ -22,6 +22,10 @@ namespace AkaiS950Engine
 
         public bool Active { get { return _stage != Stage.Idle; } }
         public int Note { get { return _note; } }
+        public int Velocity { get { return _velocity; } }
+
+        /// <summary>Which keygroup of the programme this voice came from, or -1.</summary>
+        public int KeygroupIndex { get { return _kg == null ? -1 : _kg.KeygroupIndex; } }
         public long StartedAt { get { return _startedAt; } }
         public bool Held { get { return _stage != Stage.Idle && _stage != Stage.Release; } }
 
@@ -32,6 +36,7 @@ namespace AkaiS950Engine
         KeygroupPatch _kg;
         Sound _sound;
         int _note;
+        int _velocity;
         long _startedAt;
 
         double _sampleRate;          // the rate we are rendering at
@@ -52,6 +57,7 @@ namespace AkaiS950Engine
 
         // the LFO
         double _lfoCents, _lfoPhase, _lfoStep, _fadeSeconds, _fadeT;
+        double _wheelCents;          // kept so Adopt can add it back to a new depth
         bool _ownLfo;
 
         /// <summary>Start this voice. Nothing here allocates.</summary>
@@ -61,6 +67,7 @@ namespace AkaiS950Engine
             _kg = kg;
             _sound = kg.Sound;
             _note = note;
+            _velocity = velocity < 0 ? 0 : (velocity > 127 ? 127 : velocity);
             _startedAt = sequence;
             _sampleRate = sampleRate;
 
@@ -113,6 +120,7 @@ namespace AkaiS950Engine
 
             // --- the LFO
             double own = kg.LfoDepth * Cal.LfoDepthCentsPerUnit;
+            _wheelCents = wheelCents;
             _lfoCents = own + wheelCents;
             _ownLfo = kg.LfoDesync;
             _lfoPhase = 0;
@@ -120,6 +128,75 @@ namespace AkaiS950Engine
                        (Cal.LfoRateHzAtZero + kg.LfoRate * Cal.LfoRateHzPerUnit) / sampleRate;
             _fadeSeconds = Cal.LfoDelayFadeConstant / Math.Max(1, 100 - kg.LfoDelay);
             _fadeT = 0;
+        }
+
+        /// <summary>
+        /// Take up new settings without restarting the note.
+        ///
+        /// For a value changed while the note is sounding - a filter dragged, an
+        /// envelope reshaped, a programme edited under a held MIDI loop. Everything
+        /// that describes the note is recomputed; everything that says where the note
+        /// has got to is left exactly as it is. So the sample goes on from where it
+        /// was, the envelope stays in its stage, the LFO keeps its phase and the filter
+        /// keeps its state - the last of those matters, because resetting a filter
+        /// mid-note is a click.
+        ///
+        /// A keygroup now naming a different sample is not a change to this note, it is
+        /// a different note; the position we are at would not mean the same thing in
+        /// other audio. That waits for the next trigger.
+        /// </summary>
+        public void Adopt(KeygroupPatch kg)
+        {
+            if (_stage == Stage.Idle) return;
+            if (kg == null || !ReferenceEquals(kg.Sound, _sound)) return;
+
+            _kg = kg;
+
+            // --- pitch. Changing transpose moves the playback rate under the position
+            // we already hold, which is what transposing a sounding note means.
+            double semis = kg.ZoneTranspose;
+            if (!kg.ConstantPitch) semis += _note - _sound.RootPitch;
+
+            double ratio = Math.Pow(2.0, semis / 12.0);
+            _step = _sound.SourceRate / _sampleRate * ratio;
+            _leaveRate = _sound.SourceRate * ratio;
+
+            // --- amplitude. The targets move; the gain walks to them from where it is.
+            double depth = Clamp01(kg.VelToLoudness / 99.0);
+            double velDb = -(127.0 - _velocity) * Cal.VelDbPerStep * depth;
+            double zoneDb = kg.ZoneLoudness * Cal.LoudnessDbPerUnit;
+            double sustainDb = -(1.0 - Clamp01(kg.VcaSustain / 99.0)) * Cal.SustainDb;
+
+            _attack = Cal.EnvSeconds(kg.VcaAttack) * Cal.AttackScale;
+            _decay = Cal.EnvSeconds(kg.VcaDecay);
+            _release = Cal.EnvSeconds(kg.VcaRelease);
+            _peak = Math.Min(Cal.DbToGain(velDb + zoneDb), 4.0);
+            _sustain = _peak * Cal.DbToGain(sustainDb);
+
+            // --- filter
+            _ceiling = Math.Min(Cal.MaxRatio * _leaveRate, _sampleRate * 0.45);
+            _floor = Math.Min(Cal.FloorHz, _ceiling);
+            _baseCutoff = Cal.CutoffHz(kg.ZoneFilter, _leaveRate);
+
+            double track = Clamp(kg.KeyToFilter, 0, 99) / Cal.KeyFull;
+            double keyShift = (_note - 60) / 12.0 * track;
+            double velShift = ((_velocity - Cal.VelPivot) / 127.0) *
+                              (Clamp(kg.VelToFilter, 0, 99) / 99.0) * Cal.VelOctaves;
+            _cutoffShift = keyShift + velShift;
+
+            _vcfAttack = kg.VcfWritten ? Cal.EnvSeconds(kg.VcfAttack) * Cal.VcfTimeScale : 0;
+            _vcfDecay = kg.VcfWritten ? Cal.EnvSeconds(kg.VcfDecay) * Cal.VcfTimeScale : 0;
+            _vcfSustain = kg.VcfWritten ? Clamp01(kg.VcfSustain / 99.0) : 1;
+            _vcfDepth = kg.VcfWritten ? (kg.VcfAmount / 50.0) * Cal.EnvOctaves : 0;
+
+            // deliberately no _filter.Reset() - see above
+
+            // --- the LFO keeps its phase and its place in the fade-in
+            _lfoCents = kg.LfoDepth * Cal.LfoDepthCentsPerUnit + _wheelCents;
+            _ownLfo = kg.LfoDesync;
+            _lfoStep = 2.0 * Math.PI *
+                       (Cal.LfoRateHzAtZero + kg.LfoRate * Cal.LfoRateHzPerUnit) / _sampleRate;
+            _fadeSeconds = Cal.LfoDelayFadeConstant / Math.Max(1, 100 - kg.LfoDelay);
         }
 
         /// <summary>Let go of the key. The note falls at its own release rate.</summary>

@@ -116,6 +116,11 @@ static class EditHeardCheck
         Check(decayNow != decayWas, "an envelope change reaches it as well",
               decayWas + " -> " + decayNow);
 
+        // ------------------------------------- and a note already sounding takes it up
+
+        Check(SoundingNoteFollows(inst, disk, program, patchField, Zone1Filter),
+              "a note already sounding takes up the change", "without being retriggered");
+
         // ------------------------------------------------- undo is a change as well
 
         int r = disk.Revision;
@@ -127,6 +132,56 @@ static class EditHeardCheck
         if (_failed == 0) { Console.WriteLine("all good"); return 0; }
         Console.WriteLine(_failed + " failed");
         return 1;
+    }
+
+    /// <summary>
+    /// Start a note, edit the filter while it sounds, and see whether the sound changes.
+    ///
+    /// The note is never retriggered. Everything before this establishes that an edit
+    /// reaches the patch; this is the one that says it reaches the air, which is the only
+    /// version of the question a player asks. Rendered in two halves either side of the
+    /// edit, and the second half has to be brighter or duller than the first.
+    /// </summary>
+    static bool SoundingNoteFollows(Instrument inst, AkaiDisk disk, AkaiEntry program,
+                                    FieldInfo patchField, int filterOffset)
+    {
+        inst.SetProgram(disk, program);
+        var p = (Patch)patchField.GetValue(inst);
+        if (p == null || p.Keygroups.Count == 0) return false;
+
+        KeygroupPatch kg = p.Keygroups[0];
+
+        // Dull to start with, so there is room to open up and hear it.
+        disk.SetKeygroupByte(program, 0, filterOffset, 20);
+        inst.SetProgram(disk, program);
+        p = (Patch)patchField.GetValue(inst);
+
+        var eng = new Engine(Rate);
+        eng.Gain = 1f;
+        eng.SetPatch(p);
+        eng.NoteOn((kg.LowKey + kg.HighKey) / 2, 100);
+
+        var before = new float[(int)(Rate * 0.25)];
+        Render(eng, before);
+
+        // The edit, mid-note. Nothing is retriggered and nothing is released.
+        disk.SetKeygroupByte(program, 0, filterOffset, 99);
+        inst.SetProgram(disk, program);
+        eng.SetPatch((Patch)patchField.GetValue(inst));
+
+        var after = new float[(int)(Rate * 0.25)];
+        Render(eng, after);
+
+        double a = Centroid(before), b = Centroid(after);
+        Console.WriteLine("         " + a.ToString("F0") + " Hz before the edit, " +
+                          b.ToString("F0") + " Hz after");
+        return Math.Abs(a - b) > 2.0;
+    }
+
+    static void Render(Engine eng, float[] buf)
+    {
+        for (int at = 0; at < buf.Length; at += 441)
+            eng.Render(buf, at, Math.Min(441, buf.Length - at));
     }
 
     /// <summary>The first keygroup's zone 1 filter, as the patch holds it.</summary>

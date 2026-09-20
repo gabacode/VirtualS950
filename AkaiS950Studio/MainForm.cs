@@ -134,6 +134,10 @@ namespace AkaiS950Studio
         protected override void OnLoad(EventArgs e)
         {
             base.OnLoad(e);
+
+            _editWatch.Tick += OnEditWatchTick;
+            _editWatch.Start();
+
             TrySetSplitter(_mainSplit, 210, 120, 240);
             // the waveform keeps its height as the window grows; the number column its width
             TrySetSplitter(_outerSplit, Math.Max(240, _outerSplit.Height - 190), 200, 110);
@@ -2090,6 +2094,45 @@ namespace AkaiS950Studio
                       (f != null && f.Entry.Type == 'P' ? f.Entry.Name.Trim()
                                                          : "nothing yet, select a programme") +
                       "  -  " + _instrument.LatencyMs.ToString("0") + " ms");
+        }
+
+        /*
+         * The engine finds out about edits by being watched, not by being told.
+         *
+         * Telling it means every edit site remembering to - the property grid, the
+         * envelope handles, the loop dialog, slicing, importing, undo. There are more
+         * of them than anyone will keep in their head, and the symptom when one forgets
+         * is not an error but silence: the note goes on sounding exactly as it did, so
+         * the edit looks like it did nothing. That has now been reported twice.
+         *
+         * So instead the disk counts its own revisions and this looks at the number.
+         * It costs one integer comparison six times a second, it cannot be forgotten by
+         * a new edit path, and it works when the notes are arriving over MIDI and
+         * nothing in the window is being clicked at all - which is the case that first
+         * showed it up, because only a key click or a change of selection used to load
+         * the programme.
+         */
+        readonly System.Windows.Forms.Timer _editWatch =
+            new System.Windows.Forms.Timer { Interval = 160 };
+
+        int _seenRevision = -1;
+        AkaiDisk _seenDisk;
+
+        void OnEditWatchTick(object sender, EventArgs e)
+        {
+            if (!_instrumentOk) return;
+
+            var f = SelectedFile;
+            if (f == null || f.Disk == null || f.Entry.Type != 'P') return;
+
+            if (ReferenceEquals(f.Disk, _seenDisk) && f.Disk.Revision == _seenRevision) return;
+
+            _seenDisk = f.Disk;
+            _seenRevision = f.Disk.Revision;
+
+            // Rebuilds the patch and hands it to the engine, which passes it on to the
+            // voices already sounding.
+            _instrument.SetProgram(f.Disk, f.Entry);
         }
 
         /// <summary>

@@ -31,7 +31,7 @@ namespace AkaiS950Engine
         readonly Event[] _ring = new Event[RingSize];
         int _write, _read;
 
-        const byte EvNoteOn = 1, EvNoteOff = 2, EvWheel = 3, EvAllOff = 4;
+        const byte EvNoteOn = 1, EvNoteOff = 2, EvWheel = 3, EvAllOff = 4, EvRepatch = 5;
 
         Patch _patch;
         long _sequence;
@@ -83,6 +83,11 @@ namespace AkaiS950Engine
                     break;
                 }
             }
+
+            // Notes already sounding take up the new settings where they stand, rather
+            // than waiting to be struck again. Posted rather than done here: the voices
+            // belong to the audio thread. See Repatch.
+            Post(EvRepatch, 0, 0);
         }
 
         /// <summary>The note the last note-on was for, or -1.</summary>
@@ -139,9 +144,46 @@ namespace AkaiS950Engine
                     case EvNoteOn: StartNote(e.A, e.B); break;
                     case EvNoteOff: StopNote(e.A); break;
                     case EvWheel: _wheel = e.A; break;
+                    case EvRepatch: Repatch(); break;
                     case EvAllOff:
                         for (int i = 0; i < _voices.Length; i++) _voices[i].Release();
                         break;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Hand every sounding voice its keygroup out of the patch now loaded.
+        ///
+        /// Runs here, on the audio thread, because the voices belong to it. SetPatch is
+        /// called from whichever thread noticed the edit, and reaching into the voices
+        /// from there would be a race with the block being rendered - so it posts,
+        /// like a note does, and this picks it up in order with everything else.
+        ///
+        /// Matched by keygroup index rather than by key range: a voice belongs to the
+        /// keygroup that started it, and an edit may have moved the ranges under it.
+        /// </summary>
+        void Repatch()
+        {
+            Patch p = _patch;
+            if (p == null) return;
+
+            for (int i = 0; i < _voices.Length; i++)
+            {
+                Voice v = _voices[i];
+                if (!v.Active) continue;
+
+                int want = v.KeygroupIndex;
+                if (want < 0) continue;
+
+                for (int k = 0; k < p.Keygroups.Count; k++)
+                {
+                    KeygroupPatch kg = p.Keygroups[k];
+                    if (kg.KeygroupIndex != want) continue;
+                    if (v.Velocity < kg.VelocityFrom || v.Velocity > kg.VelocityTo) continue;
+
+                    v.Adopt(kg);
+                    break;
                 }
             }
         }
