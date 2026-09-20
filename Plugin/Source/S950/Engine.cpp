@@ -1,0 +1,271 @@
+#include "Engine.h"
+
+#include <cstring>
+
+namespace s950
+{
+    Engine::Engine (double rate)
+        : sampleRate (rate <= 0 ? 48000.0 : rate)
+    {
+        matched.reserve (Polyphony);
+    }
+
+    /*
+     * WHY THE PATCH CHANGES HANDS THIS WAY
+     *
+     * The C# simply assigned a reference and let the garbage collector work out when the old
+     * programme could go. There is no collector here, and the two obvious replacements are
+     * both wrong in the same place:
+     *
+     *   - An atomic<Patch*> leaks, or frees while a voice is halfway through a sample.
+     *   - A shared_ptr read on the audio thread copies, which touches a reference count and,
+     *     if that copy turns out to be the last, frees every sample buffer in the programme
+     *     inside the audio callback. That is a dropout waiting for the worst moment.
+     *
+     * So the pointer is moved, never copied, and only ever in one direction at a time. The
+     * message thread puts a patch in `pending`; the audio thread moves it into `audioPatch`
+     * and moves what was there into `retired`; the message thread takes `retired` away and
+     * destroys it. Moving a shared_ptr touches no reference count and allocates nothing, so
+     * the audio thread's half costs two pointer swaps.
+     *
+     * The audio thread declines to take a new patch while a retired one is still waiting to
+     * be collected. That means a second programme change before the host's message thread
+     * has run is simply held until it has - a programme arriving a few milliseconds late
+     * being the whole cost of never freeing on the wrong thread.
+     */
+    void Engine::setPatch (PatchPtr patch)
+    {
+        collectRetiredPatch();          // make room, if the audio thread has handed one back
+
+        // The shared LFO runs at the rate the programme's keygroups ask for. They almost
+        // always agree; where they do not, the first one wins, since one shared oscillator
+        // cannot be at two rates at once.
+        double step = 0.0;
+        if (patch != nullptr)
+        {
+            for (const auto& k : patch->keygroups)
+            {
+                if (k.lfoDesync) continue;
+
+                step = 2.0 * 3.14159265358979323846
+                       * (cal::LfoRateHzAtZero + k.lfoRate * cal::LfoRateHzPerUnit) / sampleRate;
+                break;
+            }
+        }
+
+        sharedStep = step;              // read only by the audio thread; a double write is atomic enough here
+        pending    = std::move (patch);
+        pendingReady.store (true, std::memory_order_release);
+    }
+
+    void Engine::collectRetiredPatch()
+    {
+        if (! retiredReady.load (std::memory_order_acquire))
+            return;
+
+        retired.reset();                // the frees happen HERE, on the message thread
+        retiredReady.store (false, std::memory_order_release);
+    }
+
+    void Engine::takePendingPatch()
+    {
+        if (! pendingReady.load (std::memory_order_acquire))
+            return;
+
+        // Only if the last one has been collected - otherwise we would have nowhere to put
+        // what we are replacing, and dropping it here would free it on this thread.
+        if (retiredReady.load (std::memory_order_acquire))
+            return;
+
+        retired    = std::move (audioPatch);
+        audioPatch = std::move (pending);
+
+        pendingReady.store (false, std::memory_order_release);
+        retiredReady.store (true,  std::memory_order_release);
+
+        // Notes already sounding take up the new settings where they stand, rather than
+        // waiting to be struck again.
+        repatch();
+    }
+
+    // ---------------------------------------------------------------------- the ring
+
+    void Engine::post (unsigned char kind, int a, int b)
+    {
+        const int w    = writeIndex.load (std::memory_order_relaxed);
+        const int next = (w + 1) % RingSize;
+
+        if (next == readIndex.load (std::memory_order_acquire))
+            return;                     // full: drop it rather than block
+
+        ring[w].kind = kind;
+        ring[w].a    = static_cast<unsigned char> (a < 0 ? 0 : (a > 255 ? 255 : a));
+        ring[w].b    = static_cast<unsigned char> (b < 0 ? 0 : (b > 255 ? 255 : b));
+
+        writeIndex.store (next, std::memory_order_release);
+    }
+
+    void Engine::drainEvents()
+    {
+        int r = readIndex.load (std::memory_order_relaxed);
+
+        while (r != writeIndex.load (std::memory_order_acquire))
+        {
+            const Event e = ring[r];
+            r = (r + 1) % RingSize;
+
+            switch (e.kind)
+            {
+                case EvNoteOn:  startNote (e.a, e.b); break;
+                case EvNoteOff: stopNote (e.a);       break;
+                case EvWheel:   wheel = e.a;          break;
+
+                case EvAllOff:
+                    for (auto& v : voices) v.release();
+                    break;
+
+                default: break;
+            }
+        }
+
+        readIndex.store (r, std::memory_order_release);
+    }
+
+    /*
+     * Hand every sounding voice its keygroup out of the patch now loaded.
+     *
+     * Matched by keygroup index rather than by key range: a voice belongs to the keygroup
+     * that started it, and an edit may have moved the ranges under it.
+     */
+    void Engine::repatch()
+    {
+        if (audioPatch == nullptr)
+        {
+            // Nothing to point at any more. The voices hold a shared_ptr to their audio, so
+            // they can finish what they are playing - but their keygroup is gone.
+            for (auto& v : voices)
+                if (v.isActive()) v.kill();
+
+            return;
+        }
+
+        for (auto& v : voices)
+        {
+            if (! v.isActive()) continue;
+
+            const int want = v.getKeygroupIndex();
+            if (want < 0) continue;
+
+            for (const auto& kg : audioPatch->keygroups)
+            {
+                if (kg.keygroupIndex != want) continue;
+                if (v.getVelocity() < kg.velocityFrom || v.getVelocity() > kg.velocityTo) continue;
+
+                v.adopt (kg);
+                break;
+            }
+        }
+    }
+
+    void Engine::startNote (int note, int velocity)
+    {
+        if (audioPatch == nullptr)
+            return;
+
+        audioPatch->matching (note, velocity, matched);
+
+        for (const KeygroupPatch* kg : matched)
+        {
+            // What the wheel adds, in cents. Byte 22 scales it, proportionally - the machine
+            // gave 0.509 of full at byte 22 = 50, where proportional is 0.505.
+            double wheelCents = cal::LfoWheelCentsAtFull
+                                * (kg->lfoModwheelDepth / 99.0)
+                                * (wheel / 127.0);
+
+            if (kg->lfoDepth * cal::LfoDepthCentsPerUnit + wheelCents < 0.5)
+                wheelCents = 0.0;
+
+            take().start (*kg, note, velocity, sampleRate, wheelCents, sequence++);
+        }
+    }
+
+    /*
+     * Let go of every voice holding this note.
+     *
+     * Every one, not the first: pressing the same key twice before releasing it is ordinary,
+     * and leaving the older voice held would strand it.
+     */
+    void Engine::stopNote (int note)
+    {
+        for (auto& v : voices)
+            if (v.isActive() && v.getNote() == note && v.isHeld())
+                v.release();
+    }
+
+    /*
+     * A voice to start a note on.
+     *
+     * Idle first, obviously. Then the oldest one that has already been let go and is only
+     * fading - taking that costs a tail nobody is listening to. Only if every voice is still
+     * held does it take one of those, and then the oldest.
+     *
+     * Taking the oldest regardless, which the C# did at first, would cut off a key the player
+     * is holding while a released note was left ringing beside it - which reads exactly like
+     * "the release did not happen".
+     */
+    Voice& Engine::take()
+    {
+        for (auto& v : voices)
+            if (! v.isActive()) return v;
+
+        int pick = -1;
+        for (int i = 0; i < Polyphony; ++i)
+        {
+            if (voices[i].isHeld()) continue;                 // still down: leave it
+            if (pick < 0 || voices[i].getStartedAt() < voices[pick].getStartedAt()) pick = i;
+        }
+
+        if (pick < 0)
+        {
+            pick = 0;
+            for (int i = 1; i < Polyphony; ++i)
+                if (voices[i].getStartedAt() < voices[pick].getStartedAt()) pick = i;
+        }
+
+        voices[pick].kill();
+        return voices[pick];
+    }
+
+    int Engine::getActiveVoices() const
+    {
+        int n = 0;
+        for (const auto& v : voices)
+            if (v.isActive()) ++n;
+
+        return n;
+    }
+
+    void Engine::render (float* buffer, int count)
+    {
+        takePendingPatch();
+        drainEvents();
+
+        std::memset (buffer, 0, static_cast<size_t> (count) * sizeof (float));
+
+        for (auto& v : voices)
+            if (v.isActive())
+                v.render (buffer, count, sharedPhase);
+
+        sharedPhase += sharedStep * count;
+        if (sharedPhase > 2.0 * 3.14159265358979323846)
+            sharedPhase = std::fmod (sharedPhase, 2.0 * 3.14159265358979323846);
+
+        const float g = gain.load (std::memory_order_relaxed);
+
+        for (int i = 0; i < count; ++i)
+        {
+            const float v = buffer[i] * g;
+            buffer[i] = v > 1.0f ? 1.0f : (v < -1.0f ? -1.0f : v);
+        }
+    }
+}
