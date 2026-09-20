@@ -19,7 +19,8 @@
 
 #define AppName        "VirtualS950"
 #define AppVersion     "0.1.0"
-#define AppPublisher   "simozzer"
+#define AppPublisher   "Simon Moscrop"
+#define AppCopyright   "Copyright (C) 2026 Simon Moscrop"
 #define AppURL         "https://github.com/simozzer/VirtualS950"
 
 #define RepoRoot       ".."
@@ -30,9 +31,16 @@ AppId={{7A1D5C4E-9B62-4E8B-9F3A-0C51A4D9E7B2}
 AppName={#AppName}
 AppVersion={#AppVersion}
 AppPublisher={#AppPublisher}
+AppCopyright={#AppCopyright}
 AppPublisherURL={#AppURL}
 AppSupportURL={#AppURL}
 AppUpdatesURL={#AppURL}
+
+; Shown before anything is installed, and required rather than decorative: conveying a
+; binary under the AGPL means conveying the licence with it. It is installed beside the
+; programs as well, because a licence somebody clicked past a year ago is not a copy they
+; have got.
+LicenseFile={#RepoRoot}\LICENSE
 
 DefaultDirName={autopf}\{#AppName}
 DefaultGroupName={#AppName}
@@ -76,6 +84,10 @@ Source: "{#PluginArtefacts}\Standalone\VirtualS950.exe"; DestDir: "{app}"; Compo
 Source: "{#PluginArtefacts}\VST3\VirtualS950.vst3\*"; DestDir: "{autocf}\VST3\VirtualS950.vst3"; \
     Components: vst3; Flags: ignoreversion recursesubdirs createallsubdirs
 
+; Not optional and not attached to a component: every install gets it, because the licence
+; travels with the binaries whichever of them were chosen.
+Source: "{#RepoRoot}\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
+
 Source: "{#RepoRoot}\README.md";        DestDir: "{app}"; Flags: ignoreversion isreadme
 Source: "{#RepoRoot}\Plugin\README.md"; DestDir: "{app}"; DestName: "README-plugin.md"; Flags: ignoreversion
 
@@ -89,6 +101,19 @@ Name: "{autodesktop}\Akai S950 Studio";  Filename: "{app}\AkaiS950Studio.exe"; C
 [Tasks]
 Name: "desktopicon"; Description: "Create a desktop shortcut for the editor"; \
     GroupDescription: "Shortcuts:"; Components: studio; Flags: unchecked
+
+[UninstallDelete]
+;
+; Uninstall removes the files it put inside the bundle, but not the bundle itself - Inno
+; only prunes directories it is sure it created, and this one may have been there already.
+; That leaves an empty VirtualS950.vst3 sitting in a folder the host scans, which is worse
+; than untidy: a bundle with no binary in it is something a DAW has to decide what to do
+; about, and different ones decide differently.
+;
+; Found by installing and uninstalling this for real - the binary was gone and the folder
+; was not, which is also why the first check for it reported the plugin still present.
+;
+Type: filesandordirs; Name: "{autocf}\VST3\VirtualS950.vst3"
 
 [Run]
 Filename: "{app}\AkaiS950Studio.exe"; Description: "Open Akai S950 Studio"; \
