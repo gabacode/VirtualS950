@@ -37,10 +37,19 @@ public:
     bool isMidiEffect() const override { return false; }
     double getTailLengthSeconds() const override;
 
-    int getNumPrograms() override { return 1; }
-    int getCurrentProgram() override { return 0; }
-    void setCurrentProgram (int) override {}
-    const juce::String getProgramName (int) override { return "Default"; }
+    /*
+     * The disk's programmes, as the host's own program list.
+     *
+     * This is what puts them in Ableton's device title bar, so one can be picked without
+     * opening the plugin window at all - and what lets the choice be automated, or driven
+     * by a MIDI program change, both of which the host does for free once the list is here.
+     *
+     * It is the same list the combo box shows, from the same place; neither is a copy.
+     */
+    int getNumPrograms() override;
+    int getCurrentProgram() override;
+    void setCurrentProgram (int index) override;
+    const juce::String getProgramName (int index) override;
     void changeProgramName (int, const juce::String&) override {}
 
     void getStateInformation (juce::MemoryBlock&) override;
@@ -82,6 +91,16 @@ public:
     int getBadSectors() const;
     int getMissingSectors() const;
 
+    /*
+     * Bumped whenever the loaded disk or programme changes, however it changed.
+     *
+     * The editor watches this on the timer it already runs. Without it, a set restored by
+     * the host would leave an editor that had been built first showing an empty list, and
+     * an editor built afterwards showing the right one - which is the same class of bug as
+     * the list not surviving a window being closed.
+     */
+    int getDiskGeneration() const { return diskGeneration.load (std::memory_order_relaxed); }
+
 private:
     void timerCallback() override;
 
@@ -112,9 +131,17 @@ private:
      * one day put the entire 800K image in the host's project, which is what stops a saved
      * song from ever losing the sound it was made with.
      */
+    /*
+     * Take a disk that is already in memory - from a file just read, or from a host's
+     * saved project. Fills in the programme list and plays the first one.
+     */
+    bool adoptDisk (std::unique_ptr<s950::Disk> opened, juce::String& error);
+
     std::unique_ptr<s950::Disk> disk;
+    juce::String                diskPath;        // where it came from, for the label only
     juce::StringArray           programNames;
     int                         selectedProgram = -1;
+    std::atomic<int>            diskGeneration { 0 };
 
     /// The engine renders one channel; the host usually wants two. Sized in prepareToPlay,
     /// because processBlock is not allowed to allocate.

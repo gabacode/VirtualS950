@@ -29,6 +29,9 @@ private:
 
     VirtualS950Processor& processor;
 
+    /// The processor generation this window last caught up with. See timerCallback.
+    int seenGeneration = -1;
+
     void openDisk();
 
     /*

@@ -125,6 +125,16 @@ namespace s950
         bool wasHfe() const { return fromHfe; }
 
         /*
+         * The decoded sectors, as a plain image.
+         *
+         * For putting a disk somewhere it can be got back from - a host's saved project,
+         * say. Always the sectors, never the .hfe it may have arrived in: decoding is
+         * deterministic and one-way, so keeping the result means a reload does no MFM work
+         * and cannot come out differently.
+         */
+        const std::vector<unsigned char>& getImage() const { return image; }
+
+        /*
          * How the recovery went, for an .hfe. Both zero for a plain image.
          *
          * Worth showing rather than hiding: an archived floppy is thirty years old, and a

@@ -190,25 +190,132 @@ void VirtualS950Processor::processBlock (juce::AudioBuffer<float>& buffer,
 
 // ------------------------------------------------------------------------- the state
 
+/*
+ * WHAT A SAVED PROJECT CARRIES
+ *
+ * The whole disk, not a path to it.
+ *
+ * A path is smaller and it is what most plugins store, and it breaks: the library gets
+ * moved or renamed, the project goes to somebody else, the drive letter changes, and the
+ * song opens silent. For a sampler that is worse than for most plugins, because the sound
+ * IS the disk - there is nothing to fall back on.
+ *
+ * An S950 floppy is 800 x 1024 bytes. Compressed and encoded it comes to a few hundred
+ * kilobytes inside the project, which is nothing beside the audio a session already holds,
+ * and it means a saved song can never lose the sound it was made with - on this machine or
+ * any other.
+ *
+ * The sectors are stored rather than the .hfe they may have arrived in: decoding is
+ * deterministic and one way, so keeping the result means reopening does no MFM work and
+ * cannot come out differently from the day it was saved.
+ */
 void VirtualS950Processor::getStateInformation (juce::MemoryBlock& destination)
 {
-    /*
-     * Only the parameters so far.
-     *
-     * When disks can be read this has to carry the programme as well, and a file path will
-     * not do it: the library moves and the project stops working. An S950 image is 800 x
-     * 1024 bytes, so the whole disk can go in here and a saved project can never be missing
-     * the sound it was made with.
-     */
-    if (auto state = parameters.copyState().createXml())
-        copyXmlToBinary (*state, destination);
+    auto state = parameters.copyState();
+    auto xml   = state.createXml();
+
+    if (xml == nullptr)
+        return;
+
+    if (disk != nullptr && ! programNames.isEmpty())
+    {
+        auto* node = xml->createNewChildElement ("DISK");
+
+        node->setAttribute ("name",    juce::String (disk->getName()));
+        node->setAttribute ("path",    diskPath);
+        node->setAttribute ("program", selectedProgram);
+
+        // Also by name: if a disk is ever replaced by an edited version with the
+        // programmes in a different order, the name is what the musician meant.
+        if (selectedProgram >= 0 && selectedProgram < programNames.size())
+            node->setAttribute ("programName", programNames[selectedProgram]);
+
+        const auto& image = disk->getImage();
+
+        juce::MemoryOutputStream packed;
+        {
+            juce::GZIPCompressorOutputStream zip (packed, 9);
+            zip.write (image.data(), image.size());
+        }
+
+        node->setAttribute ("bytes",  static_cast<int> (image.size()));
+        node->addTextElement (juce::Base64::toBase64 (packed.getData(), packed.getDataSize()));
+    }
+
+    copyXmlToBinary (*xml, destination);
 }
 
 void VirtualS950Processor::setStateInformation (const void* data, int size)
 {
-    if (auto xml = getXmlFromBinary (data, size))
-        if (xml->hasTagName (parameters.state.getType()))
-            parameters.replaceState (juce::ValueTree::fromXml (*xml));
+    auto xml = getXmlFromBinary (data, size);
+
+    if (xml == nullptr || ! xml->hasTagName (parameters.state.getType()))
+        return;
+
+    /*
+     * The disk rides as a child of the parameter tree, so what is wanted is copied out and
+     * the element taken away before the rest is handed to the APVTS - which knows nothing
+     * about it and would only carry it around inside the parameter state for ever.
+     */
+    juce::String diskName, savedPath, wantedProgram, encoded;
+    int  savedIndex = 0;
+    bool haveDisk   = false;
+
+    if (auto* found = xml->getChildByName ("DISK"))
+    {
+        diskName      = found->getStringAttribute ("name");
+        savedPath     = found->getStringAttribute ("path");
+        wantedProgram = found->getStringAttribute ("programName");
+        savedIndex    = found->getIntAttribute ("program", 0);
+        encoded       = found->getAllSubText().trim();
+        haveDisk      = true;
+
+        xml->removeChildElement (found, true);
+    }
+
+    parameters.replaceState (juce::ValueTree::fromXml (*xml));
+
+    if (! haveDisk || encoded.isEmpty())
+        return;
+
+    juce::MemoryOutputStream packed;
+    if (! juce::Base64::convertFromBase64 (packed, encoded))
+        return;
+
+    juce::MemoryInputStream          source (packed.getData(), packed.getDataSize(), false);
+    juce::GZIPDecompressorInputStream unzip (source);
+
+    juce::MemoryOutputStream sectors;
+    sectors.writeFromInputStream (unzip, -1);
+
+    if (sectors.getDataSize() == 0)
+        return;
+
+    const auto* first = static_cast<const unsigned char*> (sectors.getData());
+    std::vector<unsigned char> bytes (first, first + sectors.getDataSize());
+
+    auto restored = std::make_unique<s950::Disk>();
+    std::string why;
+
+    if (! restored->loadBytes (diskName.toStdString(), std::move (bytes), why))
+        return;
+
+    juce::String error;
+    if (! adoptDisk (std::move (restored), error))
+        return;
+
+    diskPath = savedPath;
+
+    /*
+     * Back to the programme that was playing.
+     *
+     * By name first: a disk edited since the song was saved can have its programmes in a
+     * different order, and the name is what was meant. The index is the fallback, for a
+     * programme that has since been renamed.
+     */
+    const int index = programNames.indexOf (wantedProgram);
+
+    selectProgram (index >= 0 ? index : savedIndex);
 }
 
 // ---------------------------------------------------------------------------- disks
@@ -224,6 +331,17 @@ bool VirtualS950Processor::loadDisk (const juce::File& file, juce::String& error
         return false;
     }
 
+    if (! adoptDisk (std::move (opened), error))
+        return false;
+
+    diskPath = file.getFullPathName();
+    return true;
+}
+
+bool VirtualS950Processor::adoptDisk (std::unique_ptr<s950::Disk> opened, juce::String& error)
+{
+    if (opened == nullptr) { error = "no disk"; return false; }
+
     juce::StringArray names;
     for (const auto& e : opened->getEntries())
         if (e.type == 'P')
@@ -235,17 +353,62 @@ bool VirtualS950Processor::loadDisk (const juce::File& file, juce::String& error
         return false;
     }
 
-    disk         = std::move (opened);
-    programNames = names;
+    disk            = std::move (opened);
+    diskPath        = {};
+    programNames    = names;
     selectedProgram = -1;
 
     selectProgram (0);
+    diskGeneration.fetch_add (1, std::memory_order_relaxed);
+
+    /*
+     * A new disk is a new list of programmes, and the host is showing the old one.
+     *
+     * parameterInfoChanged is what makes a host re-read the list; programChanged only says
+     * which of them is current. Hosts vary in how far they go - some rebuild the chooser,
+     * some only notice on reload - so the plugin's own combo box stays the reliable route
+     * and this is the convenience.
+     */
+    updateHostDisplay (juce::AudioProcessorListener::ChangeDetails {}
+                           .withProgramChanged (true)
+                           .withParameterInfoChanged (true));
+
     return true;
 }
 
 juce::StringArray VirtualS950Processor::getProgramNames() const
 {
     return programNames;
+}
+
+// --------------------------------------------------- the disk's programmes, as the host's
+
+/*
+ * A host insists on at least one programme, so with no disk loaded there is exactly one and
+ * it is the placeholder. Saying zero here makes some hosts unhappy and others hide the
+ * chooser entirely.
+ */
+int VirtualS950Processor::getNumPrograms()
+{
+    return juce::jmax (1, programNames.size());
+}
+
+int VirtualS950Processor::getCurrentProgram()
+{
+    return juce::jmax (0, selectedProgram);
+}
+
+void VirtualS950Processor::setCurrentProgram (int index)
+{
+    selectProgram (index);
+}
+
+const juce::String VirtualS950Processor::getProgramName (int index)
+{
+    if (juce::isPositiveAndBelow (index, programNames.size()))
+        return programNames[index];
+
+    return programNames.isEmpty() ? "Placeholder saw" : juce::String();
 }
 
 juce::String VirtualS950Processor::getDiskName() const
@@ -289,6 +452,8 @@ void VirtualS950Processor::selectProgram (int index)
 
     if (engine != nullptr)
         engine->setPatch (patch);
+
+    diskGeneration.fetch_add (1, std::memory_order_relaxed);
 }
 
 // ------------------------------------------------------------------- for the editor

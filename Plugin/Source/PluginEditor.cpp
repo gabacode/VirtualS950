@@ -128,6 +128,24 @@ void VirtualS950Editor::refreshPrograms()
 
 void VirtualS950Editor::timerCallback()
 {
+    /*
+     * Follow the processor if it changed underneath us.
+     *
+     * The disk and the programme can now move without this window doing it: the host's own
+     * program chooser, a MIDI program change, or a saved set being restored after the
+     * editor was already built. One integer compare ten times a second, against a counter
+     * the processor bumps, catches all three without any of them having to know this
+     * window exists.
+     */
+    const int generation = processor.getDiskGeneration();
+
+    if (generation != seenGeneration)
+    {
+        seenGeneration = generation;
+        refreshPrograms();
+        repaint();                  // the disk name is painted, not a label
+    }
+
     const int voices = processor.getActiveVoices();
 
     patchLabel.setText (processor.getPatchName(), juce::dontSendNotification);
