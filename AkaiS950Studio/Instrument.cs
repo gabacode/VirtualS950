@@ -84,6 +84,27 @@ namespace AkaiS950Studio
         // ------------------------------------------------------------------- playing
 
         public void NoteOn(int note, int velocity) { Live.NoteOn(note, velocity); }
+
+        /// <summary>
+        /// What the last note actually sounded, named.
+        ///
+        /// Read after the note has been rendered, so it is one buffer behind - which for
+        /// a status line is close enough, and it is the truth rather than an intention.
+        /// </summary>
+        public string LastPlayed()
+        {
+            Engine e = Live;
+            int n = e.LastStartedCount;
+            if (n == 0) return "nothing";
+
+            var names = new List<string>();
+            for (int i = 0; i < n; i++)
+            {
+                Sound s = e.LastStarted(i);
+                if (s != null && !names.Contains(s.Name)) names.Add(s.Name);
+            }
+            return string.Join(" + ", names.ToArray());
+        }
         public void NoteOff(int note) { Live.NoteOff(note); }
         public void AllNotesOff() { Live.AllNotesOff(); }
 

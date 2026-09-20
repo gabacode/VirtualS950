@@ -35,6 +35,18 @@ namespace AkaiS950Engine
 
         Patch _patch;
         long _sequence;
+
+        /*
+         * What the last note-on actually started.
+         *
+         * Not for the engine's benefit - for the caller's, so a report of "every key
+         * plays the same sample" can be answered with what the voices really picked up
+         * rather than with what the caller meant to ask for. References only: naming
+         * them would mean building a string on the audio thread, which is the one thing
+         * the render path is not allowed to do.
+         */
+        readonly Sound[] _started = new Sound[Polyphony];
+        int _startedCount, _startedNote = -1;
         double _sharedPhase, _sharedStep;
         int _wheel;
 
@@ -71,6 +83,18 @@ namespace AkaiS950Engine
                     break;
                 }
             }
+        }
+
+        /// <summary>The note the last note-on was for, or -1.</summary>
+        public int LastNote { get { return _startedNote; } }
+
+        /// <summary>How many voices that note-on started.</summary>
+        public int LastStartedCount { get { return _startedCount; } }
+
+        /// <summary>The sound one of them picked up.</summary>
+        public Sound LastStarted(int i)
+        {
+            return i >= 0 && i < _startedCount ? _started[i] : null;
         }
 
         public int ActiveVoices
@@ -125,6 +149,8 @@ namespace AkaiS950Engine
         void StartNote(int note, int velocity)
         {
             Patch p = _patch;
+            _startedCount = 0;
+            _startedNote = note;
             if (p == null) return;
 
             p.Matching(note, _matched);
@@ -132,6 +158,7 @@ namespace AkaiS950Engine
             for (int m = 0; m < _matched.Count; m++)
             {
                 KeygroupPatch kg = _matched[m];
+                if (_startedCount < _started.Length) _started[_startedCount++] = kg.Sound;
 
                 // What the wheel adds, in cents. Byte 22 scales it, proportionally - the
                 // machine gave 0.509 of full at byte 22 = 50, where proportional is 0.505.

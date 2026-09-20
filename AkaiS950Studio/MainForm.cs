@@ -2087,11 +2087,14 @@ namespace AkaiS950Studio
                     _instrument.SetProgram(f.Disk, f.Entry);
                     _instrument.NoteOn(note, 100);
 
-                    SetStatus("Playing " + sample.Name + " at " + NoteName(note) +
-                              "  -  " + shift.ToString("+0.00;-0.00;0", CultureInfo.InvariantCulture) +
+                    // What it is SOUNDING, not what the keygroup under the pointer says.
+                    // Overlapping keygroups mean a key can sound more than one sample, and
+                    // the two answers differing is worth being able to see.
+                    SetStatus("Playing " + _instrument.LastPlayed() + " at " + NoteName(note) +
+                              "  -  keygroup " + (group + 1) + " names " + sample.Name.Trim() +
+                              ", " + shift.ToString("+0.00;-0.00;0", CultureInfo.InvariantCulture) +
                               " semitones" + (kg.ConstantPitch ? ", constant pitch" : "") +
-                              "  -  filter, envelopes and LFO, " +
-                              _instrument.LatencyMs.ToString("0") + " ms");
+                              "  -  " + _instrument.LatencyMs.ToString("0") + " ms");
                 }
                 else
                 {
