@@ -50,6 +50,24 @@ The editor needs the .NET Framework 4, which Windows 10 from 1903 and every Wind
 in the box. The installer checks anyway and offers to carry on with just the plugin, because
 "nothing happens when I run it" is a miserable way to find out.
 
+## What it deliberately does not install
+
+**ffmpeg.** It is optional and it is not bundled.
+
+The editor reads WAV and AIFF/AIFC itself — PCM at 8, 16, 24 or 32 bits, IEEE float at 32 or
+64, any channel count or rate — and only reaches for ffmpeg on `PATH` for anything else, MP3
+and FLAC and Ogg. Import already says so where it matters: files it cannot open are marked
+"needs ffmpeg" in the browser, and the dialog says up front when none was found. The plugin
+does not use it at all.
+
+Bundling it would be the wrong trade twice over. It is tens of megabytes for a feature most
+people will never reach, and its licence depends on how the build was configured — an
+ffmpeg built as GPL2-only cannot be shipped alongside an AGPLv3 program at all. Calling it
+as a separate process found on `PATH`, which is what the editor does, keeps it at arm's
+length and leaves the choice of build to whoever wants the feature.
+
+Anyone who does: any ffmpeg on `PATH` will do, and nothing needs configuring.
+
 ## Before giving it to anyone else
 
 **VirtualS950 is AGPLv3** — see `LICENSE` at the root of the repository. That is not an
