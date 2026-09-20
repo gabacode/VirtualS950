@@ -32,23 +32,49 @@ VirtualS950Editor::VirtualS950Editor (VirtualS950Processor& p)
     };
     addAndMakeVisible (programs);
 
-    setSize (460, 230);
+    // Big enough to hold the file browser, which opens inside this window rather than as a
+    // dialog of its own - see openDisk.
+    setSize (720, 500);
     startTimerHz (10);
 }
 
 /*
  * Pick an image.
  *
- * Raw sector images only so far. The library this was written against is .hfe, which is the
- * same 800K of sectors wrapped in a bit-level encoding of what a floppy controller would
- * see off the disk; decoding that is a job of its own, and the editor can already write a
- * raw image out in the meantime.
+ * The browser opens INSIDE this window rather than as a native dialog, and that is the
+ * whole point of it. JUCE puts a native chooser on the primary display:
+ *
+ *     auto mainMon = Desktop::getInstance().getDisplays().getPrimaryDisplay()->userBounds;
+ *     setBounds (mainMon.getX() + mainMon.getWidth() / 4, ...)
+ *
+ * On a machine with two monitors six thousand pixels apart, a plugin on the second one
+ * opened its file dialog on the first, where nobody was looking. From the DAW it was
+ * indistinguishable from a button that did nothing.
+ *
+ * Parenting the browser into the editor removes the whole class of problem rather than that
+ * one instance of it: it cannot land on another screen, it cannot hide behind a DAW window
+ * that is always on top, and it cannot take focus away from the host. The cost is that it
+ * looks like JUCE rather than like Windows, which for a plugin is the right way round.
+ *
+ * Raw sector images only so far. The library this was written against is .hfe, the same
+ * 800K wrapped in a bit-level encoding of what a floppy controller sees; the editor writes
+ * raw images in the meantime.
  */
 void VirtualS950Editor::openDisk()
 {
+    // Somewhere useful to start, so there is no navigating on the first try.
+    auto start = juce::File::getSpecialLocation (juce::File::userDocumentsDirectory)
+                     .getChildFile ("S950 images");
+
+    if (! start.isDirectory())
+        start = juce::File::getSpecialLocation (juce::File::userDocumentsDirectory);
+
     chooser = std::make_unique<juce::FileChooser> ("Open an Akai S950 disk image",
-                                                   juce::File(),
-                                                   "*.img");
+                                                   start,
+                                                   "*.img",
+                                                   false,      // not the OS dialog - see above
+                                                   false,
+                                                   this);      // live in this window
 
     const auto flags = juce::FileBrowserComponent::openMode
                      | juce::FileBrowserComponent::canSelectFiles;
