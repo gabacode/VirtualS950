@@ -52,9 +52,11 @@ in the box. The installer checks anyway and offers to carry on with just the plu
 
 ## Before giving it to anyone else
 
-**The repository has no licence file, and the plugin links JUCE, which is GPL3 unless you
-have bought a licence.** Distributing a binary built against GPL3 JUCE obliges you to offer
-the source under GPL3. The repository being public goes most of the way, but until there is
-a `LICENSE` in it the terms are not actually stated — and with no licence at all, nobody
-else has permission to use what they download. Worth settling before this installer goes
-anywhere.
+**VirtualS950 is AGPLv3** — see `LICENSE` at the root of the repository. That is not an
+arbitrary choice: the plugin links JUCE, which since version 8 is AGPLv3 unless you have
+bought a commercial licence, and matching it means the repository's terms and the JUCE
+parts' terms are the same thing rather than two sets in one project.
+
+What that obliges, in practice: anyone you give the installer to is entitled to the source
+it was built from, under the same licence. The repository being public satisfies that, so
+long as the version you hand out corresponds to a commit that is actually pushed.

@@ -1954,7 +1954,23 @@ namespace AkaiS950Studio
                 Environment.NewLine +
                 "and deleted, and the image written back out as either .hfe or" +
                 Environment.NewLine +
-                ".img; the original file is never overwritten.",
+                ".img; the original file is never overwritten." +
+                Environment.NewLine + Environment.NewLine +
+
+                // The licence asks an interactive program to say so where it can be seen.
+                "Copyright (C) 2026 Simon Moscrop" + Environment.NewLine +
+                "Licensed under the GNU Affero General Public License v3." +
+                Environment.NewLine +
+                "This program comes with ABSOLUTELY NO WARRANTY. It is free" +
+                Environment.NewLine +
+                "software, and you are welcome to redistribute it under" +
+                Environment.NewLine +
+                "those terms; see the LICENSE file, or gnu.org/licenses." +
+                Environment.NewLine + Environment.NewLine +
+                "Source: github.com/simozzer/VirtualS950" +
+                Environment.NewLine + Environment.NewLine +
+                AppTitle.Substring(AppTitle.IndexOf("Studio") + 6).Trim(),
+
                 "About", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
 

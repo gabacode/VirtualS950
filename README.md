@@ -130,3 +130,31 @@ The same format work, and the same measured constants, exist as a browser tool:
 [**AkaiS950Web**](https://github.com/simozzer/AkaiS950Web) — which is also where the
 calibration apparatus lives, and where the S950 disk format is written up in sixteen
 pages. The two are checked against each other on purpose.
+
+## Licence
+
+AGPLv3 — see [`LICENSE`](LICENSE).
+
+That follows from the plugin rather than being a preference: it links JUCE, which since
+version 8 is AGPLv3 unless you have bought a commercial licence. Licensing this the same way
+means the repository's terms and the JUCE parts' terms are one thing rather than two sets
+living in one project. The editor uses no JUCE at all, but one licence across the repository
+is simpler than a rule about which half you are looking at.
+
+In practice: anyone given a binary is entitled to the source it was built from, under the
+same licence, which a public repository satisfies.
+
+```
+Copyright (C) 2026 Simon Moscrop
+
+This program is free software: you can redistribute it and/or modify it under the terms
+of the GNU Affero General Public License as published by the Free Software Foundation,
+either version 3 of the License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
+without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+See the GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License along with this
+program. If not, see <https://www.gnu.org/licenses/>.
+```

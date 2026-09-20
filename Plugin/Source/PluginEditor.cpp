@@ -191,6 +191,13 @@ void VirtualS950Editor::paint (juce::Graphics& g)
                 16, 18, getWidth() - 32, 18,
                 juce::Justification::centredRight, true);
 
+    // The licence asks an interactive program to say so where it can be seen.
+    g.setColour (juce::Colours::darkgrey);
+    g.setFont (juce::FontOptions (10.0f));
+    g.drawText ("AGPLv3, no warranty  -  github.com/simozzer/VirtualS950",
+                16, getHeight() - 22, getWidth() - 32, 16,
+                juce::Justification::centredRight, true);
+
     g.setColour (juce::Colours::grey);
     g.setFont (juce::FontOptions (13.0f));
 

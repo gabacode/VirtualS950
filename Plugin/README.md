@@ -37,8 +37,9 @@ with the worst relative difference across the filter's 65 cutoff points at exact
   for the Visual Studio versions it knows by name, and CMake does not care which one is
   installed.
 
-JUCE is GPL3 unless you buy a licence. `VirtualS950` is a public repository, so a GPL3 plugin
-is fine; a closed-source one would not be.
+JUCE 9 is **AGPLv3** unless you buy a licence — not GPL3, which is what JUCE 6 and 7 were.
+`VirtualS950` is AGPLv3 to match, so there is no gap between what this repository says and
+what the JUCE parts oblige. A closed-source plugin would need a commercial JUCE licence.
 
 ## Building the plugin
 
