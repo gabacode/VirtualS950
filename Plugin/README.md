@@ -83,12 +83,21 @@ Two places where it could not stay identical, both in `Engine`:
 
 1. The JUCE wrapper — `AudioProcessor`, `processBlock` calling `Engine::render`, MIDI in
    from the host.
-2. **Sample-accurate MIDI.** The ring carries no timestamps, so events land at the start of
-   the next block. At a 512-sample buffer that is 11 ms of jitter, which is audible on drum
-   programming and is exactly what this instrument is for. Events need a sample offset and
-   `render` needs to split at them.
-3. **State.** A host saves the project and expects it back exactly. A file path breaks the
+2. **State.** A host saves the project and expects it back exactly. A file path breaks the
    moment the library moves — but an S950 image is 800×1024 bytes, so the whole disk can go
    in the plugin's state and there is never a missing file to hunt.
-4. Reading disks. `AkaiS950List` is 2700 lines of byte manipulation with no dependencies;
+3. Reading disks. `AkaiS950List` is 2700 lines of byte manipulation with no dependencies;
    the plugin only needs the reading half of it.
+
+## Sample-accurate events
+
+`noteOn`, `noteOff`, `modwheel` and `allNotesOff` each take an `at` — where in the next block
+the event belongs, in samples. `render` fills the block in stretches between events rather
+than applying them all at the top, so a note lands on the sample the host asked for.
+
+This is the one place the port deliberately does *more* than the C#, and it is not a
+refinement. Applying everything at the block boundary still sounds like a working
+instrument — just one that quantises every note it is sent to the buffer size. At 512
+samples that is 11 ms, which nobody hears as a fault; they hear a drum machine that does not
+quite swing. The C# has no use for it, because a piano keyboard and a MIDI port have nothing
+finer to offer, and `at` defaults to 0, which is exactly that behaviour.

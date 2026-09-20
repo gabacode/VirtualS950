@@ -54,10 +54,22 @@ namespace s950
 
         // ------------------------------------------------------------------- playing
 
-        void noteOn (int note, int velocity) { post (EvNoteOn,  note, velocity); }
-        void noteOff (int note)              { post (EvNoteOff, note, 0); }
-        void modwheel (int value)            { post (EvWheel,   value, 0); }
-        void allNotesOff()                   { post (EvAllOff,  0, 0); }
+        /*
+         * `at` is where in the next block the event belongs, in samples.
+         *
+         * A host hands over a block of audio and, with it, the events that happen part
+         * way through it. Applying them all at the start instead - which is what the C#
+         * does, because nothing driving it has anything better to offer - rounds every
+         * note to the block boundary. At a 512-sample buffer that is 11 ms of jitter,
+         * and 11 ms is audible on a drum pattern, which is what this instrument is for.
+         *
+         * Zero is "at the start of the next block", which is right for a note struck by
+         * hand, by a MIDI port, or by anything else with no finer timing to give.
+         */
+        void noteOn (int note, int velocity, int at = 0) { post (EvNoteOn,  note, velocity, at); }
+        void noteOff (int note, int at = 0)              { post (EvNoteOff, note, 0, at); }
+        void modwheel (int value, int at = 0)            { post (EvWheel,   value, 0, at); }
+        void allNotesOff (int at = 0)                    { post (EvAllOff,  0, 0, at); }
 
         // -------------------------------------------------------------------- render
 
@@ -78,11 +90,23 @@ namespace s950
 
         static constexpr int RingSize = 256;
 
-        struct Event { unsigned char kind, a, b; };
+        struct Event
+        {
+            unsigned char  kind, a, b;
+            unsigned short at;          // samples into the block this belongs to
+        };
 
-        void post (unsigned char kind, int a, int b);
-        void drainEvents();
+        void post (unsigned char kind, int a, int b, int at);
         void takePendingPatch();
+
+        /// The next event's place in this block, clamped into it. False if there is none.
+        bool peekEvent (int& at, int count) const;
+
+        /// Take the next event off the ring and do it.
+        void applyNextEvent();
+
+        /// Every voice into one stretch of the buffer.
+        void renderSpan (float* buffer, int count);
         void repatch();
         void startNote (int note, int velocity);
         void stopNote (int note);

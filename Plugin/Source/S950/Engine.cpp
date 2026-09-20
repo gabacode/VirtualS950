@@ -90,7 +90,7 @@ namespace s950
 
     // ---------------------------------------------------------------------- the ring
 
-    void Engine::post (unsigned char kind, int a, int b)
+    void Engine::post (unsigned char kind, int a, int b, int at)
     {
         const int w    = writeIndex.load (std::memory_order_relaxed);
         const int next = (w + 1) % RingSize;
@@ -101,34 +101,54 @@ namespace s950
         ring[w].kind = kind;
         ring[w].a    = static_cast<unsigned char> (a < 0 ? 0 : (a > 255 ? 255 : a));
         ring[w].b    = static_cast<unsigned char> (b < 0 ? 0 : (b > 255 ? 255 : b));
+        ring[w].at   = static_cast<unsigned short> (at < 0 ? 0 : (at > 65535 ? 65535 : at));
 
         writeIndex.store (next, std::memory_order_release);
     }
 
-    void Engine::drainEvents()
+    bool Engine::peekEvent (int& at, int count) const
     {
-        int r = readIndex.load (std::memory_order_relaxed);
+        const int r = readIndex.load (std::memory_order_relaxed);
 
-        while (r != writeIndex.load (std::memory_order_acquire))
+        if (r == writeIndex.load (std::memory_order_acquire))
+            return false;
+
+        /*
+         * Clamped into this block rather than carried over to the next.
+         *
+         * A host should never hand over an offset past the end of the block it came
+         * with, but if one does, holding the event back would mean keeping state about
+         * a block that has already gone. Late by a few samples beats lost.
+         */
+        at = ring[r].at;
+        if (at > count - 1) at = count - 1;
+        if (at < 0)         at = 0;
+
+        return true;
+    }
+
+    void Engine::applyNextEvent()
+    {
+        const int r = readIndex.load (std::memory_order_relaxed);
+
+        if (r == writeIndex.load (std::memory_order_acquire))
+            return;
+
+        const Event e = ring[r];
+        readIndex.store ((r + 1) % RingSize, std::memory_order_release);
+
+        switch (e.kind)
         {
-            const Event e = ring[r];
-            r = (r + 1) % RingSize;
+            case EvNoteOn:  startNote (e.a, e.b); break;
+            case EvNoteOff: stopNote (e.a);       break;
+            case EvWheel:   wheel = e.a;          break;
 
-            switch (e.kind)
-            {
-                case EvNoteOn:  startNote (e.a, e.b); break;
-                case EvNoteOff: stopNote (e.a);       break;
-                case EvWheel:   wheel = e.a;          break;
+            case EvAllOff:
+                for (auto& v : voices) v.release();
+                break;
 
-                case EvAllOff:
-                    for (auto& v : voices) v.release();
-                    break;
-
-                default: break;
-            }
+            default: break;
         }
-
-        readIndex.store (r, std::memory_order_release);
     }
 
     /*
@@ -245,20 +265,58 @@ namespace s950
         return n;
     }
 
-    void Engine::render (float* buffer, int count)
+    void Engine::renderSpan (float* buffer, int count)
     {
-        takePendingPatch();
-        drainEvents();
-
-        std::memset (buffer, 0, static_cast<size_t> (count) * sizeof (float));
+        if (count <= 0) return;
 
         for (auto& v : voices)
             if (v.isActive())
                 v.render (buffer, count, sharedPhase);
 
+        // The shared LFO moves with the audio, so it advances per stretch rather than
+        // once per block - otherwise splitting a block would change how it sounds.
         sharedPhase += sharedStep * count;
         if (sharedPhase > 2.0 * 3.14159265358979323846)
             sharedPhase = std::fmod (sharedPhase, 2.0 * 3.14159265358979323846);
+    }
+
+    /*
+     * Fill the block, stopping at each event to do it where it belongs.
+     *
+     * The C# renders a block and then applies whatever arrived, because a keyboard and a
+     * MIDI port have no finer timing to give it. A host does: every note comes with an
+     * offset into the block it was handed with, and rounding those to the block boundary
+     * is up to 11 ms of jitter at a 512-sample buffer.
+     *
+     * So the block is rendered in stretches between events. With nothing in the ring
+     * that is one stretch and the same work as before; with a note at sample 200 of 512
+     * it is two, and the note starts on sample 200.
+     */
+    void Engine::render (float* buffer, int count)
+    {
+        takePendingPatch();
+
+        if (count <= 0) return;
+
+        std::memset (buffer, 0, static_cast<size_t> (count) * sizeof (float));
+
+        int at = 0;
+        while (at < count)
+        {
+            int next;
+
+            // everything due by now, in the order it arrived
+            while (peekEvent (next, count) && next <= at)
+                applyNextEvent();
+
+            // up to the next one, or to the end of the block
+            int until = peekEvent (next, count) ? next : count;
+            if (until <= at)  until = at + 1;      // never stand still
+            if (until > count) until = count;
+
+            renderSpan (buffer + at, until - at);
+            at = until;
+        }
 
         const float g = gain.load (std::memory_order_relaxed);
 

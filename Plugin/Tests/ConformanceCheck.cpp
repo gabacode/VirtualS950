@@ -229,6 +229,111 @@ namespace
         check (rms (buffer) == 0.0, "no patch, no sound", rms (buffer), 0.0);
     }
 
+    /*
+     * A note asked for part way through a block has to start there.
+     *
+     * The thing this is really guarding is a silent one: applying every event at the top of
+     * the block still sounds like a working instrument, just one that quantises everything
+     * it is sent to the buffer size. At 512 samples that is 11 ms, which nobody hears as a
+     * fault - they hear a drum machine that does not quite swing.
+     *
+     * So the check is where the sound starts, not whether there is any.
+     */
+    void checkEventTiming()
+    {
+        std::printf ("\n  when a note starts inside a block\n");
+
+        auto patch = std::make_shared<s950::Patch>();
+
+        s950::KeygroupPatch kg;
+        kg.keygroupIndex = 0;
+        kg.sound         = makeSaw (48000, 48000);
+        kg.zoneFilter    = 99;
+        patch->keygroups.push_back (kg);
+
+        const int block = 512;
+
+        for (const int offset : { 0, 1, 100, 200, 411, 511 })
+        {
+            s950::Engine engine (48000.0);
+            engine.gain.store (0.25f);          // well clear of clipping, so a peak means something
+            engine.setPatch (patch);
+
+            /*
+             * Two blocks, not one.
+             *
+             * A note has an attack even when its attack byte is zero - the shortest the
+             * machine does is 1.68 ms, which is 80 samples at 48 kHz - and it starts at
+             * silence and climbs. So a note placed at sample 511 of a 512-sample block has
+             * exactly one sample in which to be audible, and in that one sample it is not:
+             * its gain is still about a hundredth of the way up and the filter has not moved
+             * off zero. Rendering the block after it as well is what makes the question
+             * answerable at all, and costs nothing.
+             */
+            std::vector<float> buffer (static_cast<size_t> (block) * 2);
+            engine.noteOn (60, 127, offset);
+            engine.render (buffer.data(), block);
+            engine.render (buffer.data() + block, block);
+
+            // The first sample that is not silence. Before the note there is nothing at all
+            // in the buffer - it is memset and no voice is running - so this cannot be early.
+            int first = -1;
+            for (int i = 0; i < static_cast<int> (buffer.size()); ++i)
+            {
+                if (std::fabs (static_cast<double> (buffer[static_cast<size_t> (i)])) > 1e-7)
+                {
+                    first = i;
+                    break;
+                }
+            }
+
+            char what[64];
+            std::snprintf (what, sizeof (what), "note at sample %d", offset);
+
+            /*
+             * Within a control block of where it was asked for.
+             *
+             * Not to the sample: a voice recomputes its modulators every 32 samples and the
+             * envelope climbs from nothing, so the first few samples of a note can be too
+             * quiet to see. Landing inside one control block is the difference that matters
+             * - the failure being guarded against is a whole buffer out.
+             */
+            const bool ok = first >= offset && first < offset + 64;
+            check (ok, what, first, offset);
+        }
+
+        // Two notes in one block, each joining where it belongs.
+        {
+            s950::Engine engine (48000.0);
+            engine.gain.store (0.25f);
+            engine.setPatch (patch);
+
+            std::vector<float> buffer (static_cast<size_t> (block));
+            engine.noteOn (60, 127, 100);
+            engine.noteOn (67, 127, 300);
+            engine.render (buffer.data(), block);
+
+            check (engine.getActiveVoices() == 2, "two notes in one block",
+                   engine.getActiveVoices(), 2);
+
+            /*
+             * Louder where both are sounding than where only one is.
+             *
+             * Measured as energy rather than as a peak: at full gain two sawtooths sum past
+             * +-1 and both halves clip to exactly 1.0, which compares equal and says
+             * nothing. That is what the first version of this check did.
+             */
+            double one = 0.0, both = 0.0;
+            for (int i = 150; i < 290; ++i) one  += std::pow (buffer[(size_t) i], 2.0);
+            for (int i = 350; i < 490; ++i) both += std::pow (buffer[(size_t) i], 2.0);
+
+            one  = std::sqrt (one  / 140.0);
+            both = std::sqrt (both / 140.0);
+
+            check (both > one * 1.1, "the second note joins part way through", both, one);
+        }
+    }
+
     void checkFilter()
     {
         std::printf ("\n  the filter\n");
@@ -270,6 +375,7 @@ int main()
     checkLfo();
     checkFilter();
     checkEngine();
+    checkEventTiming();
 
     std::printf ("\n  %d checks, %d failed\n\n", checks, failures);
     return failures == 0 ? 0 : 1;
