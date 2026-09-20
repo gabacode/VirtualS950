@@ -58,14 +58,16 @@ namespace AkaiS950Studio
         readonly ToolStripMenuItem _newProgramItem = new ToolStripMenuItem("New &Program...");
         readonly ToolStripMenuItem _sliceItem = new ToolStripMenuItem("S&lice into One-shots...");
         readonly ToolStripMenuItem _deleteItem = new ToolStripMenuItem("&Delete File...");
-        readonly PropertyGrid _props = new PropertyGrid();
-        readonly TabControl _rightTabs = new TabControl();
+
+        readonly Panel _workArea = new Panel();
+        Control _editArea;
 
         readonly EnvelopeEditor _vcaEnv = new EnvelopeEditor { Title = "VCA" };
         readonly EnvelopeEditor _vcfEnv = new EnvelopeEditor { Title = "VCF" };
         readonly TrackBar _vcfAmount = new TrackBar();
         readonly Label _vcfAmountLabel = new Label();
-        SplitContainer _editSplit;
+        // The envelopes, hidden when nothing with envelopes is selected.
+        Panel _envPanel;
 
         /*
          * Two ways of making a noise, and the old one is still here on purpose.
@@ -371,13 +373,24 @@ namespace AkaiS950Studio
             _kgPanel.Controls.Add(_kgButtons);
             _kgPanel.Controls.Add(_kgHeader);
 
-            var tabSummary = new TabPage("Summary");
-            tabSummary.Controls.Add(_details);
-            var tabEdit = new TabPage("Edit");
-            tabEdit.Controls.Add(BuildEditPane());
-            _rightTabs.Dock = DockStyle.Fill;
-            _rightTabs.TabPages.Add(tabSummary);
-            _rightTabs.TabPages.Add(tabEdit);
+            /*
+             * No tabs. They existed because a programme's and a sample's few fields
+             * needed somewhere to live, and those are on the header strip now - so
+             * what is left is one area showing whichever thing is selected: the
+             * keygroup editor for a programme, the detail list for a disk, and
+             * nothing at all for a sample, whose waveform is already along the bottom.
+             * The web version has no tabs either, and for the same reason.
+             */
+            _details.Dock = DockStyle.Fill;
+            _details.Visible = false;
+
+            _editArea = BuildEditPane();
+            _editArea.Dock = DockStyle.Fill;
+            _editArea.Visible = false;
+
+            _workArea.Dock = DockStyle.Fill;
+            _workArea.Controls.Add(_details);
+            _workArea.Controls.Add(_editArea);
 
             // Keygroup numbers on the left, the editor filling what is left of the row.
             var middle = new SplitContainer
@@ -387,7 +400,7 @@ namespace AkaiS950Studio
                 FixedPanel = FixedPanel.Panel1
             };
             middle.Panel1.Controls.Add(_kgPanel);
-            middle.Panel2.Controls.Add(_rightTabs);
+            middle.Panel2.Controls.Add(_workArea);
             _middleSplit = middle;
 
             // The keyboard runs across the top of the working area, above both of them,
@@ -395,6 +408,7 @@ namespace AkaiS950Studio
             var work = new Panel { Dock = DockStyle.Fill };
             work.Controls.Add(middle);
             work.Controls.Add(_piano);
+            work.Controls.Add(BuildFileHeader());
 
             _keygroups.SelectedIndexChanged += (s, e) => OnKeygroupSelected();
             _piano.RangePicked += OnRangePicked;
@@ -462,16 +476,6 @@ namespace AkaiS950Studio
         /// </summary>
         Control BuildEditPane()
         {
-            _props.Dock = DockStyle.Fill;
-            _props.PropertySort = PropertySort.Categorized;
-            _props.ToolbarVisible = false;
-            _props.HelpVisible = true;
-            _props.PropertyValueChanged += OnPropertyChanged;
-
-            // The grid says what changed only after it has, so the "before" is taken
-            // when a row is selected - which always precedes editing it.
-            _props.SelectedGridItemChanged += (s, e) => CaptureBaseline();
-            _props.Enter += (s, e) => CaptureBaseline();
 
             _vcaEnv.Dock = DockStyle.Fill;
             _vcaEnv.Changed += OnVcaEnvelopeChanged;
@@ -518,6 +522,7 @@ namespace AkaiS950Studio
 
             var envPanel = new Panel { Dock = DockStyle.Fill };
             envPanel.Controls.Add(stack);
+            _envPanel = envPanel;
 
             /*
              * The keygroup editor, laid out as the web version lays it out: the
@@ -536,16 +541,7 @@ namespace AkaiS950Studio
             keygroupSide.Controls.Add(keygroupPane);
             keygroupSide.Controls.Add(zonePane);
 
-            var split = new SplitContainer
-            {
-                Dock = DockStyle.Fill,
-                Orientation = Orientation.Vertical
-            };
-            split.Panel1.Controls.Add(_props);
-            split.Panel2.Controls.Add(keygroupSide);
-            split.Panel1Collapsed = true;      // a keygroup uses the pane, not the grid
-            _editSplit = split;
-            return split;
+            return keygroupSide;
         }
 
         SplitContainer _outerSplit;      // working area over the waveform
@@ -723,7 +719,6 @@ namespace AkaiS950Studio
             _baseline = null;
             _baselineDisk = null;
             _kgEntry = null;
-            _props.SelectedObject = null;
 
             _suppressKgSelect = true;
             _keygroups.Items.Clear();
@@ -903,9 +898,16 @@ namespace AkaiS950Studio
             // rather than leaving the previous sample running over the new selection.
             if (_autoPlay.Checked) StopAudio();
 
-            if (tag is AkaiDisk) { ShowDisk((AkaiDisk)tag); _editDisk = (AkaiDisk)tag; _props.SelectedObject = null; }
+            if (tag is AkaiDisk)
+            {
+                ShowDisk((AkaiDisk)tag);
+                _editDisk = (AkaiDisk)tag;
+                ShowFileHeader(null);
+                _editArea.Visible = false;
+                _details.Visible = true;          // the disk's own numbers
+            }
             else if (tag is FileRef) { ShowFile((FileRef)tag); ShowEditor((FileRef)tag); }
-            else { _props.SelectedObject = null; }
+            else { ShowFileHeader(null); _editArea.Visible = false; _details.Visible = false; }
 
             _details.EndUpdate();
             UpdateCommands();
@@ -1928,16 +1930,15 @@ namespace AkaiS950Studio
         {
             _editDisk = f != null ? f.Disk : null;
 
-            // The pane belongs to a keygroup; anything else is a grid of a few fields.
+            ShowFileHeader(f);
             LoadKeygroupPane(null, null, 0, 0);
-            _editSplit.Panel1Collapsed = false;
-            _editSplit.Panel2Collapsed = true;
+            _envPanel.Visible = false;              // envelopes belong to a keygroup
 
-            if (f == null) { _props.SelectedObject = null; return; }
-
-            if (f.Entry.Type == 'P') _props.SelectedObject = new ProgramEditor(f.Disk, f.Entry);
-            else if (f.Entry.Type == 'S') _props.SelectedObject = new SampleEditor(f.Disk, f.Entry);
-            else _props.SelectedObject = null;
+            // A programme gets the keygroup editor. A sample has nothing here - its
+            // header is on the strip and its waveform is along the bottom.
+            bool programme = f != null && f.Entry.Type == 'P';
+            _details.Visible = false;
+            _editArea.Visible = programme;
         }
 
         // ---------------------------------------------------------- envelopes
@@ -1947,7 +1948,7 @@ namespace AkaiS950Studio
         /// <summary>Loads the selected keygroup's two envelopes into the editors.</summary>
         void LoadEnvelopes(AkaiDisk.Keygroup kg)
         {
-            if (kg == null) { _editSplit.Panel2Collapsed = true; return; }
+            if (kg == null) { _envPanel.Visible = false; return; }
 
             _loadingEnvelopes = true;
             try
@@ -1975,7 +1976,7 @@ namespace AkaiS950Studio
             }
             finally { _loadingEnvelopes = false; }
 
-            _editSplit.Panel2Collapsed = false;
+            _envPanel.Visible = true;
         }
 
         bool _loadingEnvelopes;
@@ -2078,9 +2079,8 @@ namespace AkaiS950Studio
             var editor = new KeygroupEditor(f.Disk, f.Entry, i,
                                             picked.GetRange(1, picked.Count - 1));
 
-            _editSplit.Panel1Collapsed = true;          // the pane, not the grid
             LoadKeygroupPane(editor, f.Disk, i, AkaiDisk.KeygroupCount(f.Entry));
-            _rightTabs.SelectedIndex = 1;
+            _editArea.Visible = true;
 
             var groups = f.Disk.Keygroups(f.Entry);
             LoadEnvelopes(i < groups.Count ? groups[i] : null);
@@ -2088,25 +2088,6 @@ namespace AkaiS950Studio
             if (picked.Count > 1)
                 SetStatus("Keygroup " + (i + 1) + " shown; edits reach all " + picked.Count +
                           " selected keygroups.");
-        }
-
-        void OnPropertyChanged(object s, PropertyValueChangedEventArgs e)
-        {
-            if (_editDisk == null) return;
-
-            string label = e.ChangedItem != null ? e.ChangedItem.Label : "property";
-            if (_baselineDisk == _editDisk) PushUndo(_editDisk, label, _baseline, _baselineModified);
-            CaptureBaseline();
-
-            _editDisk.Modified = true;
-
-            // The directory caches names, and the keygroup list caches everything.
-            _editDisk.ParseDirectory();
-            var f = SelectedFile;
-            if (f != null && f.Entry.Type == 'P') ShowKeygroups(f, AkaiDisk.KeygroupCount(f.Entry));
-            RefreshTreeLabels();
-            UpdateCommands();
-            SetStatus("Edited " + e.ChangedItem.Label + ".  Unsaved changes.");
         }
 
         void RefreshTreeLabels()
