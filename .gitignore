@@ -13,3 +13,14 @@
 # Working output from the command-line tool: inventories of whatever disks were to hand.
 inventory*.csv
 *programs-by-disk*
+
+# The C++ side. Objects land beside the sources when Visual Studio drives the build
+# rather than build.ps1, which puts them in a temp folder.
+*.obj
+*.ilk
+*.lib
+*.exp
+
+# Visual Studio's own cache for a folder it has been asked to open. Some of it is held
+# open while the IDE is running, so git cannot even read it to decide.
+.vs/

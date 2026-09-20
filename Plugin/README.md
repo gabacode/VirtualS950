@@ -19,32 +19,37 @@ Tests/ConformanceCheck.cpp
 Tests/Reference.h        GENERATED — what the C# computes, to be held to
 ```
 
-**None of it has ever been compiled.** There is no C++ compiler on the machine it was
-written on. Read that as it is meant: this is a careful transcription, not working code, and
-the first thing to do with a compiler is run the check below — not load it in a DAW.
+**It compiles, and it agrees with the C# exactly.** For one commit it was a transcription
+nobody had run, because the machine it was written on had no C++ compiler. The first build
+once Visual Studio arrived was clean at `/W4`, and the conformance check passes 141 of 141 —
+with the worst relative difference across the filter's 65 cutoff points at exactly 0.
 
 ## What it needs
 
-- **Visual Studio Community 2022**, "Desktop development with C++". Free for individuals and
-  open source. The Build Tools package is the same compiler without the IDE, but a debugger
-  you can attach to a DAW is worth having.
+- **Visual Studio Community 2026** with "Desktop development with C++" — what this was built
+  with, MSVC 14.51. Note that `cl.exe` is never on the PATH: the installer leaves it off on
+  purpose, because the compiler needs INCLUDE, LIB and PATH set for one target architecture.
+  `build.ps1` finds `vcvars64.bat` through vswhere and sets them; the Start menu's "Developer
+  PowerShell for VS 2026" does the same thing by hand.
 - **JUCE** — `git clone https://github.com/juce-framework/JUCE`. No installer, and it carries
-  the VST3 SDK headers, so there is nothing to fetch from Steinberg.
+  the VST3 SDK headers, so there is nothing to fetch from Steinberg. Drive it with JUCE's
+  CMake support rather than a Projucer-generated solution: the Projucer emits project files
+  for the Visual Studio versions it knows by name, and CMake does not care which one is
+  installed.
 
 JUCE is GPL3 unless you buy a licence. `VirtualS950` is a public repository, so a GPL3 plugin
 is fine; a closed-source one would not be.
 
-## First thing to run
+## Building and checking it
 
 ```
-cd Plugin\Tests
-cl /std:c++17 /EHsc /I..\Source\S950 ConformanceCheck.cpp ..\Source\S950\Voice.cpp ..\Source\S950\Engine.cpp
-ConformanceCheck.exe
+cd Plugin
+.\build.ps1
 ```
 
 It needs no JUCE and no audio device. It puts the same inputs through the port that
 `ReferenceDump` put through the C#, and insists on the same answers to nine decimal places —
-the filter's cutoff at 65 points, the envelope times at 34, the LFO's rate and delay fade,
+the filter's cutoff at 65 points, the envelope times at 35, the LFO's rate and delay fade,
 every measured constant, plus the filter's DC gain and stopband and the engine driven end to
 end through its event ring.
 
@@ -76,15 +81,14 @@ Two places where it could not stay identical, both in `Engine`:
 
 ## Still to do
 
-1. Run the conformance check. Nothing below is worth starting until it passes.
-2. The JUCE wrapper — `AudioProcessor`, `processBlock` calling `Engine::render`, MIDI in
+1. The JUCE wrapper — `AudioProcessor`, `processBlock` calling `Engine::render`, MIDI in
    from the host.
-3. **Sample-accurate MIDI.** The ring carries no timestamps, so events land at the start of
+2. **Sample-accurate MIDI.** The ring carries no timestamps, so events land at the start of
    the next block. At a 512-sample buffer that is 11 ms of jitter, which is audible on drum
    programming and is exactly what this instrument is for. Events need a sample offset and
    `render` needs to split at them.
-4. **State.** A host saves the project and expects it back exactly. A file path breaks the
+3. **State.** A host saves the project and expects it back exactly. A file path breaks the
    moment the library moves — but an S950 image is 800×1024 bytes, so the whole disk can go
    in the plugin's state and there is never a missing file to hunt.
-5. Reading disks. `AkaiS950List` is 2700 lines of byte manipulation with no dependencies;
+4. Reading disks. `AkaiS950List` is 2700 lines of byte manipulation with no dependencies;
    the plugin only needs the reading half of it.
