@@ -1,0 +1,174 @@
+#
+# Build both halves, prove they still agree, and package them.
+#
+# This exists for two reasons. The first is the one that pays for itself immediately: the
+# C++ engine is a port of the C# one, and the only thing keeping them honest is a check
+# that compares them against numbers generated from the original. Until now that check ran
+# when somebody remembered. Now it runs on every push, and a port that has drifted cannot
+# reach a release.
+#
+# The second is code signing. SignPath and Azure Trusted Signing both sign artifacts
+# produced by a build system they trust, not files from somebody's laptop - that is the
+# whole basis of the attestation. So a pipeline like this is the prerequisite for ever
+# signing the installer, whichever route is taken.
+#
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# Only what the release step needs, and only then.
+permissions:
+  contents: write
+
+env:
+  # Pinned rather than tracking whatever JUCE's main branch is today: a framework that
+  # changes underneath a build makes "it worked yesterday" impossible to reason about.
+  # This is the version the plugin was developed against.
+  JUCE_VERSION: '9.0.2'
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ----------------------------------------------------------------- the editor
+      #
+      # No .NET SDK is involved. The editor is built by csc.exe from .NET Framework 4,
+      # which is on every Windows runner as it is on every Windows machine since about
+      # 2010 - see build.ps1 for why that was the right dependency to have.
+      #
+      - name: Build the editor
+        shell: pwsh
+        run: .\build.ps1
+
+      - name: Check the editor
+        shell: pwsh
+        run: |
+          # PatchCheck and AudioCheck skip themselves here: one wants a library of disk
+          # images, which is other people's audio and is not in this repository, and the
+          # other wants a sound card. What remains is the maths, the loop join, the
+          # aliasing and the voice bookkeeping.
+          .\test.ps1
+
+      # ------------------------------------------------------------------- the plugin
+
+      - name: Cache JUCE
+        id: juce-cache
+        uses: actions/cache@v4
+        with:
+          path: JUCE
+          key: juce-${{ env.JUCE_VERSION }}
+
+      - name: Fetch JUCE
+        if: steps.juce-cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: git clone --depth 1 --branch $env:JUCE_VERSION https://github.com/juce-framework/JUCE.git JUCE
+
+      - name: Configure the plugin
+        shell: pwsh
+        run: cmake -S Plugin -B Plugin/build -DJUCE_PATH="$PWD/JUCE"
+
+      - name: Build the plugin
+        shell: pwsh
+        run: cmake --build Plugin/build --config Release --parallel
+
+      #
+      # The gate. This is what says the port still agrees with the engine it came from -
+      # 65 filter cutoffs, 35 envelope times, the LFO rates and delay fades, every measured
+      # constant, the filter's DC gain and stopband, the engine driven through its event
+      # ring, and notes landing on the sample they were asked for.
+      #
+      # It links no JUCE and needs no audio device. If this fails, nothing built on top of
+      # it is worth shipping.
+      #
+      - name: Does the C++ still agree with the C#
+        shell: pwsh
+        run: .\Plugin\build\Release\ConformanceCheck.exe
+
+      # ----------------------------------------------------------------- the installer
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup --no-progress -y
+
+      - name: Check the installer script
+        shell: pwsh
+        working-directory: Installer
+        run: .\check-installer.ps1
+
+      - name: Build the installer
+        shell: pwsh
+        working-directory: Installer
+        run: .\build-installer.ps1 -SkipBuild
+
+      - name: Checksum
+        shell: pwsh
+        working-directory: Installer/Output
+        run: |
+          $exe = Get-ChildItem *.exe | Select-Object -First 1
+          $hash = (Get-FileHash $exe.FullName -Algorithm SHA256).Hash.ToLower()
+          "$hash  $($exe.Name)" | Tee-Object -FilePath SHA256SUMS.txt
+          "SHA256=$hash" >> $env:GITHUB_ENV
+          "SETUP_NAME=$($exe.Name)" >> $env:GITHUB_ENV
+
+      - name: Keep the build
+        uses: actions/upload-artifact@v4
+        with:
+          name: VirtualS950-installer
+          path: |
+            Installer/Output/*.exe
+            Installer/Output/SHA256SUMS.txt
+          if-no-files-found: error
+
+      # ------------------------------------------------------------------- the release
+      #
+      # Only on a tag, and the tag is what makes the AGPL work: a binary obliges you to
+      # offer the source it was built from, and "v0.1.0 came from tag v0.1.0" answers that
+      # exactly where a file on a web host answers nothing.
+      #
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $notes = @"
+          Built from ``$env:GITHUB_SHA`` by GitHub Actions.
+
+          ``````
+          SHA-256  $env:SHA256
+          ``````
+
+          ### The installer is not signed
+
+          Windows will say **"Windows protected your PC"** and hide the Run button behind
+          **More info**. That is SmartScreen reacting to an executable it has not seen
+          before, not a judgement about this one. Check the SHA-256 above if you would
+          rather verify than trust.
+
+          ### What it installs
+
+          - **Akai S950 Studio** - open, edit and save S900/S950 disk images (.hfe and .img)
+          - **VirtualS950** - a VST3 that plays those disks in a DAW
+          - **Standalone** - the same instrument without a host
+
+          Each is optional, and the installer asks whether it is for everyone or just you.
+
+          ### Licence
+
+          AGPLv3. The source for this build is the tag it was made from.
+          "@
+
+          gh release create $env:GITHUB_REF_NAME `
+            "Installer/Output/$env:SETUP_NAME" `
+            "Installer/Output/SHA256SUMS.txt" `
+            --title "VirtualS950 $env:GITHUB_REF_NAME" `
+            --notes $notes
