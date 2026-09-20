@@ -94,6 +94,8 @@ namespace AkaiS950Studio
          *
          * Playing is now something you ask for: double-click, Ctrl+P, or the keyboard.
          */
+        readonly ToolStripMenuItem _midiMenu = new ToolStripMenuItem("&MIDI Input");
+
         readonly ToolStripMenuItem _autoPlay =
             new ToolStripMenuItem("Play on &Selection") { CheckOnClick = true, Checked = false };
 
@@ -242,6 +244,12 @@ namespace AkaiS950Studio
             });
 
             var play = new ToolStripMenuItem("&Play");
+
+            // Filled when it opens rather than now, so a keyboard plugged in after the
+            // program started is there when you go looking for it.
+            _midiMenu.DropDownOpening += (s, e) => BuildMidiMenu();
+            BuildMidiMenu();
+
             var playNow = new ToolStripMenuItem("&Play Sample", null, OnPlay)
             { ShortcutKeys = Keys.Control | Keys.P };
             var stopNow = new ToolStripMenuItem("&Stop", null, OnStopPlay)
@@ -251,7 +259,8 @@ namespace AkaiS950Studio
             };
             play.DropDownItems.AddRange(new ToolStripItem[]
             {
-                playNow, stopNow, new ToolStripSeparator(), _autoPlay
+                playNow, stopNow, new ToolStripSeparator(), _autoPlay,
+                new ToolStripSeparator(), _midiMenu
             });
 
             var help = new ToolStripMenuItem("&Help");
@@ -829,6 +838,12 @@ namespace AkaiS950Studio
 
             _details.EndUpdate();
             UpdateCommands();
+
+            // A MIDI keyboard plays what is selected, so the engine has to be told the
+            // selection moved. Without this it would still be holding whatever the last
+            // on-screen key click loaded.
+            SyncInstrumentProgram();
+
             PlayCurrent(false);
         }
 
@@ -1993,6 +2008,103 @@ namespace AkaiS950Studio
         }
 
         // --------------------------------------------------------------- audio
+
+        // ------------------------------------------------------------------ MIDI in
+
+        /*
+         * Playing the selected programme from a MIDI keyboard.
+         *
+         * The engine has always been able to do this - Instrument has had a MIDI port
+         * and a note callback since it was written - and nothing in the window ever
+         * offered it. This is that offer, and the one piece that was genuinely missing
+         * with it: the selected programme has to be loaded into the engine when the
+         * selection moves, because a MIDI keyboard gives no other opportunity. Clicking
+         * an on-screen key used to be what loaded it.
+         */
+
+        void BuildMidiMenu()
+        {
+            _midiMenu.DropDownItems.Clear();
+
+            int current = _instrumentOk ? _instrument.MidiPort : -1;
+
+            var none = new ToolStripMenuItem("&None", null, (s, e) => ChooseMidi(-1));
+            none.Checked = current < 0;
+            _midiMenu.DropDownItems.Add(none);
+
+            List<string> ports;
+            try { ports = Instrument.MidiPorts(); }
+            catch (Exception ex)
+            {
+                _midiMenu.DropDownItems.Add(new ToolStripMenuItem("(" + ex.Message + ")")
+                                            { Enabled = false });
+                return;
+            }
+
+            if (ports.Count == 0)
+            {
+                _midiMenu.DropDownItems.Add(new ToolStripMenuItem("(no MIDI inputs)")
+                                            { Enabled = false });
+                return;
+            }
+
+            _midiMenu.DropDownItems.Add(new ToolStripSeparator());
+
+            for (int i = 0; i < ports.Count; i++)
+            {
+                int port = i;                       // captured per item, not per loop
+                var item = new ToolStripMenuItem(ports[i], null, (s, e) => ChooseMidi(port));
+                item.Checked = port == current;
+                _midiMenu.DropDownItems.Add(item);
+            }
+        }
+
+        void ChooseMidi(int port)
+        {
+            if (port < 0)
+            {
+                if (_instrumentOk) _instrument.CloseMidi();
+                SetStatus("MIDI input off.");
+                return;
+            }
+
+            if (!EnsureInstrument())
+            {
+                SetStatus("No audio output, so there is nothing for MIDI to play. " +
+                          _instrument.Error);
+                return;
+            }
+
+            if (!_instrument.OpenMidi(port))
+            {
+                SetStatus("Could not open that MIDI input. " + _instrument.Error);
+                return;
+            }
+
+            // Whatever is selected becomes what the keyboard plays, now rather than at
+            // the first note.
+            SyncInstrumentProgram();
+
+            var f = SelectedFile;
+            SetStatus("MIDI in: " + _instrument.MidiPortName + "  -  playing " +
+                      (f != null && f.Entry.Type == 'P' ? f.Entry.Name.Trim()
+                                                         : "nothing yet, select a programme") +
+                      "  -  " + _instrument.LatencyMs.ToString("0") + " ms");
+        }
+
+        /// <summary>
+        /// Make the selected programme the one the engine plays.
+        ///
+        /// Cheap to call often: Instrument keeps the patch it built and hands the same
+        /// one back when nothing has changed, so this does not disturb sounding voices.
+        /// </summary>
+        void SyncInstrumentProgram()
+        {
+            if (!_instrumentOk) return;
+
+            var f = SelectedFile;
+            if (f != null && f.Entry.Type == 'P') _instrument.SetProgram(f.Disk, f.Entry);
+        }
 
         void OnPlay(object sender, EventArgs e) { PlayCurrent(true); }
 

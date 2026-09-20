@@ -40,6 +40,12 @@ namespace AkaiS950Studio
         /// </summary>
         public bool SnapLoopsToZero = false;
 
+        /// <summary>The port MIDI is listening on, or -1.</summary>
+        public int MidiPort { get; private set; }
+
+        /// <summary>The name of the port MIDI is listening on, or null.</summary>
+        public string MidiPortName { get; private set; }
+
         public bool Running { get; private set; }
         public string Error { get; private set; }
         public double LatencyMs { get { return _out.LatencyMs; } }
@@ -48,6 +54,8 @@ namespace AkaiS950Studio
 
         public Instrument()
         {
+            MidiPort = -1;
+
             // The engine is built before the output, because opening the output calls the
             // fill callback once to prime the buffer.
             _engine = new Engine(48000);
@@ -124,11 +132,28 @@ namespace AkaiS950Studio
 
         public static List<string> MidiPorts() { return MidiIn.Ports(); }
 
+        /// <summary>
+        /// Listen on a MIDI input.
+        ///
+        /// The output has to be running first. A MIDI note reaches the engine whether or
+        /// not anything is draining it, and a note posted into an engine nobody is
+        /// rendering looks exactly like a dead MIDI port from the outside.
+        /// </summary>
         public bool OpenMidi(int port)
         {
             CloseMidi();
+
+            if (!Running && !Start()) return false;
+
             _midi = new MidiIn(OnMidi);
-            if (_midi.Start(port)) return true;
+            if (_midi.Start(port))
+            {
+                MidiPort = port;
+                var names = MidiPorts();
+                MidiPortName = port >= 0 && port < names.Count ? names[port] : ("input " + port);
+                return true;
+            }
+
             Error = _midi.Error;
             _midi = null;
             return false;
@@ -136,9 +161,13 @@ namespace AkaiS950Studio
 
         public void CloseMidi()
         {
+            MidiPort = -1;
+            MidiPortName = null;
+
             if (_midi == null) return;
             _midi.Dispose();
             _midi = null;
+            Live.AllNotesOff();          // nothing is going to send the note-offs now
         }
 
         /// <summary>
@@ -161,12 +190,32 @@ namespace AkaiS950Studio
         /// Load a programme. Everything the engine needs is copied out now, so playing a
         /// note never touches the disk image or the directory.
         /// </summary>
+        // What SetProgram was last given, so the same request twice is free and so an
+        // audition knows what to put back. A key click asks for the programme it is
+        // already holding on every single press.
+        AkaiDisk _programDisk;
+        AkaiEntry _programEntry;
+        Patch _programPatch;
+
         public void SetProgram(AkaiDisk disk, AkaiEntry program)
         {
             if (disk == null || program == null || program.Type != 'P')
             {
+                _programDisk = null; _programEntry = null; _programPatch = null;
                 _patch = null;
                 Live.SetPatch(null);
+                return;
+            }
+
+            // Already loaded, and nothing has invalidated it: leave the voices alone.
+            if (ReferenceEquals(disk, _programDisk) && ReferenceEquals(program, _programEntry) &&
+                _programPatch != null)
+            {
+                if (!ReferenceEquals(_patch, _programPatch))
+                {
+                    _patch = _programPatch;
+                    Live.SetPatch(_programPatch);
+                }
                 return;
             }
 
@@ -196,8 +245,22 @@ namespace AkaiS950Studio
                 }
             }
 
+            _programDisk = disk;
+            _programEntry = program;
+            _programPatch = patch;
+
             _patch = patch;
             Live.SetPatch(patch);
+        }
+
+        /// <summary>
+        /// Put the loaded programme back after an audition has borrowed the engine.
+        /// </summary>
+        void RestoreProgram()
+        {
+            if (_programPatch == null || ReferenceEquals(_patch, _programPatch)) return;
+            _patch = _programPatch;
+            Live.SetPatch(_programPatch);
         }
 
         void AddZone(AkaiDisk disk, Patch patch, AkaiDisk.Keygroup kg, AkaiDisk.Zone zone,
@@ -286,7 +349,13 @@ namespace AkaiS950Studio
         }
 
         /// <summary>Forget the decoded audio - after an edit, or a reload.</summary>
-        public void Invalidate() { _sounds.Clear(); }
+        public void Invalidate()
+        {
+            _sounds.Clear();
+            // and the patch built out of them, or an edited sample would go on sounding
+            // as it did before the edit
+            _programDisk = null; _programEntry = null; _programPatch = null;
+        }
 
         static AkaiEntry FindSample(AkaiDisk d, string name)
         {
@@ -357,6 +426,7 @@ namespace AkaiS950Studio
             _auditionTimer = new System.Threading.Timer(delegate
             {
                 Live.NoteOff(note);
+                RestoreProgram();
             }, null, (int)(seconds * 1000), System.Threading.Timeout.Infinite);
         }
 
@@ -365,6 +435,7 @@ namespace AkaiS950Studio
         {
             if (_auditionTimer != null) { _auditionTimer.Dispose(); _auditionTimer = null; }
             Live.AllNotesOff();
+            RestoreProgram();
         }
 
         public void Dispose()
