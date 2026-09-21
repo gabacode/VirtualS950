@@ -1,5 +1,14 @@
 cmake_minimum_required(VERSION 3.22)
 
+if(CMAKE_HOST_APPLE)
+    if(NOT DEFINED CMAKE_OSX_ARCHITECTURES)
+        set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64" CACHE STRING "Architectures to build for")
+    endif()
+    if(NOT DEFINED CMAKE_OSX_DEPLOYMENT_TARGET)
+        set(CMAKE_OSX_DEPLOYMENT_TARGET "10.15" CACHE STRING "Oldest macOS this runs on")
+    endif()
+endif()
+
 project(VirtualS950 VERSION 0.1.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
@@ -34,8 +43,20 @@ add_subdirectory("${JUCE_PATH}" JUCE)
 # elevation. Hosts differ on whether they scan it by default: in Ableton it goes in
 # Preferences - Plug-Ins - VST3 Plug-In Custom Folder, once.
 #
-set(VST3_DESTINATION "$ENV{LOCALAPPDATA}/Programs/Common/VST3"
-    CACHE PATH "Where to install the built VST3")
+if(APPLE)
+    set(VST3_DESTINATION "$ENV{HOME}/Library/Audio/Plug-Ins/VST3"
+        CACHE PATH "Where to install the built VST3")
+    set(AU_DESTINATION "$ENV{HOME}/Library/Audio/Plug-Ins/Components"
+        CACHE PATH "Where to install the built AU")
+else()
+    set(VST3_DESTINATION "$ENV{LOCALAPPDATA}/Programs/Common/VST3"
+        CACHE PATH "Where to install the built VST3")
+endif()
+
+set(PLUGIN_FORMATS VST3 Standalone)
+if(APPLE)
+    list(APPEND PLUGIN_FORMATS AU)
+endif()
 
 juce_add_plugin(VirtualS950
     COMPANY_NAME                "simozzer"
@@ -57,7 +78,8 @@ juce_add_plugin(VirtualS950
 
     # Standalone as well as VST3: it opens without a DAW, which makes "is the plugin
     # broken or is the host unhappy with it" answerable in one step rather than two.
-    FORMATS                     VST3 Standalone)
+    # AU as well, on macOS, because Logic and GarageBand load nothing else.
+    FORMATS                     ${PLUGIN_FORMATS})
 
 target_sources(VirtualS950 PRIVATE
     Source/PluginProcessor.cpp
@@ -70,15 +92,23 @@ target_sources(VirtualS950 PRIVATE
 target_include_directories(VirtualS950 PRIVATE Source)
 
 #
-# Install the built bundle where a host will find it, without the build failing when the
+# Install the built bundles where a host will find them, without the build failing when the
 # host has the old one open. install_vst3.cmake explains why that is worth the detour.
 #
-add_custom_command(TARGET VirtualS950_VST3 POST_BUILD
-    COMMAND "${CMAKE_COMMAND}"
-            "-DSRC=${CMAKE_CURRENT_BINARY_DIR}/VirtualS950_artefacts/$<CONFIG>/VST3/VirtualS950.vst3"
-            "-DDST=${VST3_DESTINATION}"
-            -P "${CMAKE_CURRENT_SOURCE_DIR}/install_vst3.cmake"
-    VERBATIM)
+function(install_bundle_after_build target format bundle destination)
+    add_custom_command(TARGET ${target} POST_BUILD
+        COMMAND "${CMAKE_COMMAND}"
+                "-DSRC=${CMAKE_CURRENT_BINARY_DIR}/VirtualS950_artefacts/$<CONFIG>/${format}/${bundle}"
+                "-DDST=${destination}"
+                -P "${CMAKE_CURRENT_SOURCE_DIR}/install_vst3.cmake"
+        VERBATIM)
+endfunction()
+
+install_bundle_after_build(VirtualS950_VST3 VST3 VirtualS950.vst3 "${VST3_DESTINATION}")
+
+if(APPLE)
+    install_bundle_after_build(VirtualS950_AU AU VirtualS950.component "${AU_DESTINATION}")
+endif()
 
 target_compile_definitions(VirtualS950 PUBLIC
     JUCE_WEB_BROWSER=0

@@ -65,7 +65,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: JUCE
-          key: juce-${{ env.JUCE_VERSION }}
+          key: juce-${{ env.JUCE_VERSION }}-${{ runner.os }}
 
       - name: Fetch JUCE
         if: steps.juce-cache.outputs.cache-hit != 'true'
@@ -172,3 +172,48 @@ jobs:
             "Installer/Output/SHA256SUMS.txt" `
             --title "VirtualS950 $env:GITHUB_REF_NAME" `
             --notes $notes
+
+  macos:
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache JUCE
+        id: juce-cache
+        uses: actions/cache@v4
+        with:
+          path: JUCE
+          key: juce-${{ env.JUCE_VERSION }}-${{ runner.os }}
+
+      - name: Fetch JUCE
+        if: steps.juce-cache.outputs.cache-hit != 'true'
+        run: git clone --depth 1 --branch $JUCE_VERSION https://github.com/juce-framework/JUCE.git JUCE
+
+      - name: Configure the plugin
+        run: cmake -S Plugin -B Plugin/build -DJUCE_PATH="$PWD/JUCE" -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build the plugin
+        run: cmake --build Plugin/build --parallel
+
+      - name: Does the C++ still agree with the C#
+        run: ./Plugin/build/ConformanceCheck
+
+      - name: Does the AU satisfy Apple's validator
+        run: |
+          killall -9 AudioComponentRegistrar 2>/dev/null || true
+          auval -v aumu Ak95 Smoz
+
+      - name: Package the bundles
+        working-directory: Plugin/build/VirtualS950_artefacts/Release
+        run: |
+          ditto -c -k --keepParent VST3/VirtualS950.vst3      VirtualS950-VST3.zip
+          ditto -c -k --keepParent AU/VirtualS950.component   VirtualS950-AU.zip
+          ditto -c -k --keepParent Standalone/VirtualS950.app VirtualS950-Standalone.zip
+
+      - name: Keep the build
+        uses: actions/upload-artifact@v4
+        with:
+          name: VirtualS950-macos
+          path: Plugin/build/VirtualS950_artefacts/Release/*.zip
+          if-no-files-found: error
