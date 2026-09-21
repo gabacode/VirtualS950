@@ -21,6 +21,28 @@ ships a stale binary, or quietly leaves one out, is worse than one that stops.
 .\build-installer.ps1 -SkipBuild    # package what is already built
 ```
 
+## The macOS installer
+
+```
+cd Installer/mac
+./build-installer.sh
+```
+
+A `.pkg` built by `pkgbuild` and `productbuild`, both of which are already on the machine.
+It offers the same kind of choices the Inno script does — VST3, Audio Unit, standalone —
+and there is no mac build of the editor, so that one is missing.
+
+It installs system-wide rather than per-user, which is the opposite of what the CMake
+build does for a development install:
+
+| | Where |
+|---|---|
+| `VirtualS950.vst3` | `/Library/Audio/Plug-Ins/VST3` |
+| `VirtualS950.component` | `/Library/Audio/Plug-Ins/Components` |
+| `VirtualS950.app` | `/Applications` |
+
+The package is unsigned, so the first open needs right-click → **Open**.
+
 ## What it needs
 
 **Inno Setup 6.3 or newer** — free, about 6 MB, from <https://jrsoftware.org/isdl.php>. It is

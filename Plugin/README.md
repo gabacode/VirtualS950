@@ -26,6 +26,10 @@ with the worst relative difference across the filter's 65 cutoff points at exact
 
 ## What it needs
 
+On **macOS**: `xcode-select --install` and `brew install cmake`.
+
+On **Windows**:
+
 - **Visual Studio Community 2026** with "Desktop development with C++" — what this was built
   with, MSVC 14.51. Note that `cl.exe` is never on the PATH: the installer leaves it off on
   purpose, because the compiler needs INCLUDE, LIB and PATH set for one target architecture.
@@ -49,8 +53,19 @@ cmake -S . -B build
 cmake --build build --config Release --parallel
 ```
 
-CMake ships inside Visual Studio, so there is nothing else to install — `build.ps1` finds it
-the same way it finds the compiler. That produces three things:
+On macOS the build type goes in at configure time instead:
+
+```
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build --parallel
+```
+
+The mac build is **universal** — arm64 and x86_64 — which is why it compiles everything
+twice. `-DCMAKE_OSX_ARCHITECTURES=arm64` halves that while you are working.
+
+CMake ships inside Visual Studio, so there is nothing else to install — `build.ps1`
+finds it the same way it finds the compiler. That produces three things, or four on
+a Mac:
 
 - a **VST3**, installed to `%LOCALAPPDATA%\Programs\Common\VST3`. JUCE would rather put it in
   `C:\Program Files\Common Files\VST3`, but that cannot be written to — or created — without
@@ -60,16 +75,21 @@ the same way it finds the compiler. That produces three things:
 - a **standalone** at `build/VirtualS950_artefacts/Release/Standalone/VirtualS950.exe`, which
   opens without a DAW. That is what makes "is the plugin broken, or is the host unhappy with
   it" answerable in one step rather than two.
-- the **conformance check**, at `build/Release/ConformanceCheck.exe`.
+- on macOS, an **AU** installed to `~/Library/Audio/Plug-Ins/Components`, because Logic and
+  GarageBand load nothing else. The VST3 goes to `~/Library/Audio/Plug-Ins/VST3`, which mac
+  hosts scan without being pointed at it.
+- the **conformance check**, at `build/Release/ConformanceCheck.exe`, or
+  `build/ConformanceCheck` on macOS.
 
 ## Checking the engine on its own
 
 ```
 cd Plugin
-.\build.ps1
+.\build.ps1            # Windows
+./build.sh             # macOS
 ```
 
-It needs no JUCE and no audio device. It puts the same inputs through the port that
+It needs no JUCE, no CMake and no audio device. It puts the same inputs through the port that
 `ReferenceDump` put through the C#, and insists on the same answers to nine decimal places —
 the filter's cutoff at 65 points, the envelope times at 35, the LFO's rate and delay fade,
 every measured constant, plus the filter's DC gain and stopband and the engine driven end to

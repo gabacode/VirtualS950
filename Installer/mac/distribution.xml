@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<installer-gui-script minSpecVersion="2">
+    <title>VirtualS950</title>
+    <organization>com.simozzer</organization>
+    <options customize="always" require-scripts="false" hostArchitectures="arm64,x86_64"/>
+    <license file="LICENSE"/>
+    <readme file="README-plugin.md"/>
+
+    <choices-outline>
+        <line choice="vst3"/>
+        <line choice="au"/>
+        <line choice="standalone"/>
+    </choices-outline>
+
+    <choice id="vst3"
+            title="VST3 plugin"
+            description="Play S900/S950 disks in a DAW. Installs to /Library/Audio/Plug-Ins/VST3.">
+        <pkg-ref id="com.simozzer.VirtualS950.vst3"/>
+    </choice>
+
+    <choice id="au"
+            title="Audio Unit"
+            description="The same instrument as an AU, which is what Logic and GarageBand load. Installs to /Library/Audio/Plug-Ins/Components.">
+        <pkg-ref id="com.simozzer.VirtualS950.au"/>
+    </choice>
+
+    <choice id="standalone"
+            title="Standalone player"
+            description="The plugin without a DAW. Installs to /Applications.">
+        <pkg-ref id="com.simozzer.VirtualS950.standalone"/>
+    </choice>
+
+    <pkg-ref id="com.simozzer.VirtualS950.vst3">VirtualS950-VST3.pkg</pkg-ref>
+    <pkg-ref id="com.simozzer.VirtualS950.au">VirtualS950-AU.pkg</pkg-ref>
+    <pkg-ref id="com.simozzer.VirtualS950.standalone">VirtualS950-Standalone.pkg</pkg-ref>
+</installer-gui-script>
