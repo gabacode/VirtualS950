@@ -109,69 +109,12 @@ jobs:
         working-directory: Installer
         run: .\build-installer.ps1 -SkipBuild
 
-      - name: Checksum
-        shell: pwsh
-        working-directory: Installer/Output
-        run: |
-          $exe = Get-ChildItem *.exe | Select-Object -First 1
-          $hash = (Get-FileHash $exe.FullName -Algorithm SHA256).Hash.ToLower()
-          "$hash  $($exe.Name)" | Tee-Object -FilePath SHA256SUMS.txt
-          "SHA256=$hash" >> $env:GITHUB_ENV
-          "SETUP_NAME=$($exe.Name)" >> $env:GITHUB_ENV
-
       - name: Keep the build
         uses: actions/upload-artifact@v4
         with:
           name: VirtualS950-installer
-          path: |
-            Installer/Output/*.exe
-            Installer/Output/SHA256SUMS.txt
+          path: Installer/Output/*.exe
           if-no-files-found: error
-
-      # ------------------------------------------------------------------- the release
-      #
-      # Only on a tag, and the tag is what makes the AGPL work: a binary obliges you to
-      # offer the source it was built from, and "v0.1.0 came from tag v0.1.0" answers that
-      # exactly where a file on a web host answers nothing.
-      #
-      - name: Release
-        if: startsWith(github.ref, 'refs/tags/v')
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          $notes = @"
-          Built from ``$env:GITHUB_SHA`` by GitHub Actions.
-
-          ``````
-          SHA-256  $env:SHA256
-          ``````
-
-          ### The installer is not signed
-
-          Windows will say **"Windows protected your PC"** and hide the Run button behind
-          **More info**. That is SmartScreen reacting to an executable it has not seen
-          before, not a judgement about this one. Check the SHA-256 above if you would
-          rather verify than trust.
-
-          ### What it installs
-
-          - **Akai S950 Studio** - open, edit and save S900/S950 disk images (.hfe and .img)
-          - **VirtualS950** - a VST3 that plays those disks in a DAW
-          - **Standalone** - the same instrument without a host
-
-          Each is optional, and the installer asks whether it is for everyone or just you.
-
-          ### Licence
-
-          AGPLv3. The source for this build is the tag it was made from.
-          "@
-
-          gh release create $env:GITHUB_REF_NAME `
-            "Installer/Output/$env:SETUP_NAME" `
-            "Installer/Output/SHA256SUMS.txt" `
-            --title "VirtualS950 $env:GITHUB_REF_NAME" `
-            --notes $notes
 
   macos:
     runs-on: macos-latest
@@ -204,6 +147,10 @@ jobs:
           killall -9 AudioComponentRegistrar 2>/dev/null || true
           auval -v aumu Ak95 Smoz
 
+      - name: Build the installer
+        working-directory: Installer/mac
+        run: ./build-installer.sh --skip-build
+
       - name: Package the bundles
         working-directory: Plugin/build/VirtualS950_artefacts/Release
         run: |
@@ -215,5 +162,76 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: VirtualS950-macos
-          path: Plugin/build/VirtualS950_artefacts/Release/*.zip
+          path: |
+            Plugin/build/VirtualS950_artefacts/Release/*.zip
+            Installer/Output/*.pkg
           if-no-files-found: error
+
+  release:
+    needs: [build, macos]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Collect and checksum
+        run: |
+          mkdir -p release
+          find artifacts -type f \( -name '*.exe' -o -name '*.pkg' -o -name '*.zip' \) \
+               -exec cp {} release/ \;
+          cd release
+          sha256sum * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Release
+        working-directory: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          cat > "$RUNNER_TEMP/body.md" <<'NOTES'
+          ### The binaries are not signed
+
+          **Windows** will say **"Windows protected your PC"** and hide the Run button behind
+          **More info**. That is SmartScreen reacting to an installer it has not seen before,
+          not a judgement about this one.
+
+          **macOS** will say the package is from an unidentified developer. Right-click the
+          `.pkg` and choose **Open** to get past it.
+
+          Check the SHA-256 above if you would rather verify than trust.
+
+          ### What it installs
+
+          **Windows** — the `-setup.exe`
+
+          - **Akai S950 Studio** — open, edit and save S900/S950 disk images (.hfe and .img)
+          - **VirtualS950** — a VST3 that plays those disks in a DAW
+          - **Standalone** — the same instrument without a host
+
+          **macOS** — the `-macos.pkg`, universal for Apple silicon and Intel
+
+          - **VST3** into `/Library/Audio/Plug-Ins/VST3`
+          - **Audio Unit** into `/Library/Audio/Plug-Ins/Components`, which is what Logic and
+            GarageBand load
+          - **Standalone** into `/Applications`
+
+          There is no mac build of the editor. Every part is optional in both installers.
+
+          ### Licence
+
+          AGPLv3. The source for this build is the tag it was made from.
+          NOTES
+
+          {
+            printf 'Built from `%s` by GitHub Actions.\n\n' "$GITHUB_SHA"
+            printf '```\n'; cat SHA256SUMS.txt; printf '```\n\n'
+            cat "$RUNNER_TEMP/body.md"
+          } > "$RUNNER_TEMP/notes.md"
+
+          gh release create "$GITHUB_REF_NAME" VirtualS950-* SHA256SUMS.txt \
+            --title "VirtualS950 $GITHUB_REF_NAME" \
+            --notes-file "$RUNNER_TEMP/notes.md"
