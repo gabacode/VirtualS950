@@ -205,9 +205,68 @@ namespace AkaiS950Synth
             string path = Path.Combine(folder, bank.Name + "." + format);
             disk.SaveAs(path, format);
 
-            Console.WriteLine("    -> {0}   {1} files, {2} blocks{3}",
-                              path, files, disk.UsedBlocks,
+            int sounding = Verify(path, format);
+
+            Console.WriteLine("    -> {0}   {1} files, {2} blocks, {3} keygroups sound{4}",
+                              path, files, disk.UsedBlocks, sounding,
                               repaired > 0 ? ", " + repaired + " pointer(s) fixed" : "");
+        }
+
+        /// <summary>
+        /// Read the disk back and check that every keygroup will actually play something.
+        ///
+        /// THIS EXISTS BECAUSE IT DID NOT, ONCE
+        ///
+        /// SetZoneSample counts zones from zero. Told to write zone "1", it put every
+        /// sample name into the SECOND zone - which a velocity switch of 128 makes
+        /// unreachable - and left the first holding the template's placeholder. Five disks
+        /// were written, both readers parsed them identically, every dump looked plausible,
+        /// and not one programme could make a sound: each built a patch with no keygroups
+        /// in it, which a host quietly declines, so every programme played whatever had
+        /// been playing before.
+        ///
+        /// Nothing upstream could have caught that. The bytes were valid, the structure was
+        /// right, the readers agreed. The only question that would have found it is the one
+        /// asked here: given this disk, does this programme have a zone naming a sample that
+        /// is on it?
+        /// </summary>
+        static int Verify(string path, string format)
+        {
+            var disk = AkaiDisk.Load(path);
+
+            var samples = new List<string>();
+            foreach (var e in disk.Entries)
+                if (e.Type == 'S') samples.Add(e.Name.Trim());
+
+            int sounding = 0;
+
+            foreach (var e in disk.Entries)
+            {
+                if (e.Type != 'P') continue;
+
+                var groups = disk.Keygroups(e);
+                if (groups.Count == 0)
+                    throw new InvalidOperationException(e.Name.Trim() + " has no keygroups");
+
+                foreach (var kg in groups)
+                {
+                    var zone = kg.Zone1;
+
+                    if (zone == null || !zone.InUse)
+                        throw new InvalidOperationException(
+                            e.Name.Trim() + " keygroup " + (kg.Index + 1) +
+                            " has nothing in zone 1 - it would be silent");
+
+                    if (!samples.Contains(zone.Name.Trim()))
+                        throw new InvalidOperationException(
+                            e.Name.Trim() + " keygroup " + (kg.Index + 1) +
+                            " names '" + zone.Name.Trim() + "', which is not on this disk");
+
+                    sounding++;
+                }
+            }
+
+            return sounding;
         }
 
         /// <summary>
@@ -272,8 +331,18 @@ namespace AkaiS950Synth
             Set(disk, prog, index, 36, layer.VcfS ?? p.VcfS);
             Set(disk, prog, index, 37, layer.VcfR ?? p.VcfR);
 
+            //
             // Zone 1: the sample, then its trim. 24 is the name, 42..45 the rest.
-            disk.SetZoneSample(prog, index, 1, layer.Sample);
+            //
+            // SetZoneSample counts zones from ZERO - it multiplies the argument by the zone
+            // stride - so zone 1 is 0 here. Passing 1 puts the name 22 bytes further along
+            // in zone 2, which leaves zone 1 holding the template's "2 SAMPLE" placeholder
+            // and the trim bytes written below, and zone 2 holding a name that a velocity
+            // switch of 128 means nothing can ever reach. The programme then has no
+            // playable keygroup at all, the host declines to load an empty patch, and every
+            // programme sounds like whatever was playing before it.
+            //
+            disk.SetZoneSample(prog, index, 0, layer.Sample);
             Set(disk, prog, index, 42, layer.Fine < 0 ? 256 + layer.Fine : layer.Fine);
             Set(disk, prog, index, 43, Signed(layer.Transpose));
             Set(disk, prog, index, 44, layer.Filter ?? p.Filter);
