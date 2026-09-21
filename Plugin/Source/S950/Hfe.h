@@ -25,6 +25,10 @@ namespace s950
         /// True if these bytes start with the HXCPICFE signature.
         bool looksLikeHfe (const std::vector<unsigned char>& raw);
 
+        /// One side's cell bytes, pulled out of the interleaved track blocks.
+        std::vector<unsigned char> sideCells (const std::vector<unsigned char>& img,
+                                              int track, int side);
+
         /*
          * Decode every track and lay the sectors out linearly, exactly as a plain image
          * holds them: LBA = (cyl * sides + head) * 5 + (sec - 1), 1024 bytes each.

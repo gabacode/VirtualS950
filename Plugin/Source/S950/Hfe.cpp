@@ -13,40 +13,6 @@ namespace s950::hfe
             return static_cast<std::uint16_t> (b[at] | (b[at + 1] << 8));
         }
 
-        /// One side's cell bytes, pulled out of the interleaved track blocks.
-        std::vector<unsigned char> sideCells (const std::vector<unsigned char>& img,
-                                              int track, int side)
-        {
-            const std::size_t lut = static_cast<std::size_t> (u16 (img, 18)) * 512;
-            if (lut + static_cast<std::size_t> (track) * 4 + 3 >= img.size())
-                return {};
-
-            const std::size_t tOff = static_cast<std::size_t> (u16 (img, lut + static_cast<std::size_t> (track) * 4)) * 512;
-            const int         tLen = u16 (img, lut + static_cast<std::size_t> (track) * 4 + 2);
-            const int         half = tLen / 2;
-
-            if (half <= 0) return {};
-
-            std::vector<unsigned char> out (static_cast<std::size_t> (half));
-
-            int         w   = 0;
-            std::size_t pos = tOff;
-
-            while (w < half)
-            {
-                const int         chunk = std::min (256, half - w);
-                const std::size_t src   = pos + (side == 0 ? 0 : 256);
-
-                if (src + static_cast<std::size_t> (chunk) > img.size()) break;
-
-                std::memcpy (out.data() + w, img.data() + src, static_cast<std::size_t> (chunk));
-                w   += chunk;
-                pos += 512;
-            }
-
-            return out;
-        }
-
         /// One byte per MFM cell; HFE stores the first cell in bit 0.
         std::vector<unsigned char> unpack (const std::vector<unsigned char>& cells)
         {
@@ -178,6 +144,40 @@ namespace s950::hfe
 
             return out;
         }
+    }
+
+    /// One side's cell bytes, pulled out of the interleaved track blocks.
+    std::vector<unsigned char> sideCells (const std::vector<unsigned char>& img,
+                                          int track, int side)
+    {
+        const std::size_t lut = static_cast<std::size_t> (u16 (img, 18)) * 512;
+        if (lut + static_cast<std::size_t> (track) * 4 + 3 >= img.size())
+            return {};
+
+        const std::size_t tOff = static_cast<std::size_t> (u16 (img, lut + static_cast<std::size_t> (track) * 4)) * 512;
+        const int         tLen = u16 (img, lut + static_cast<std::size_t> (track) * 4 + 2);
+        const int         half = tLen / 2;
+
+        if (half <= 0) return {};
+
+        std::vector<unsigned char> out (static_cast<std::size_t> (half));
+
+        int         w   = 0;
+        std::size_t pos = tOff;
+
+        while (w < half)
+        {
+            const int         chunk = std::min (256, half - w);
+            const std::size_t src   = pos + (side == 0 ? 0 : 256);
+
+            if (src + static_cast<std::size_t> (chunk) > img.size()) break;
+
+            std::memcpy (out.data() + w, img.data() + src, static_cast<std::size_t> (chunk));
+            w   += chunk;
+            pos += 512;
+        }
+
+        return out;
     }
 
     bool looksLikeHfe (const std::vector<unsigned char>& raw)

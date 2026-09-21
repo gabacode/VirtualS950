@@ -93,6 +93,10 @@ jobs:
         shell: pwsh
         run: .\Plugin\build\Release\ConformanceCheck.exe
 
+      - name: Does the disk writer undo the reader
+        shell: pwsh
+        run: .\Plugin\build\Release\DiskWriteCheck.exe
+
       # ----------------------------------------------------------------- the installer
 
       - name: Install Inno Setup
@@ -141,6 +145,9 @@ jobs:
 
       - name: Does the C++ still agree with the C#
         run: ./Plugin/build/ConformanceCheck
+
+      - name: Does the disk writer undo the reader
+        run: ./Plugin/build/DiskWriteCheck
 
       - name: Does the AU satisfy Apple's validator
         run: |

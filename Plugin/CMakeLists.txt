@@ -137,5 +137,16 @@ add_executable(ConformanceCheck
 
 target_include_directories(ConformanceCheck PRIVATE Source/S950 Tests)
 
+add_executable(DiskWriteCheck
+    Tests/DiskWriteCheck.cpp
+    Source/S950/HfeWrite.cpp
+    Source/S950/Hfe.cpp
+    Source/S950/Disk.cpp
+    Source/S950/Voice.cpp
+    Source/S950/Engine.cpp)
+
+target_include_directories(DiskWriteCheck PRIVATE Source/S950 Tests)
+
 enable_testing()
 add_test(NAME conformance COMMAND ConformanceCheck)
+add_test(NAME diskwrite   COMMAND DiskWriteCheck)
